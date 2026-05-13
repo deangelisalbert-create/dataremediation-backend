@@ -225,7 +225,16 @@ async function runAuditAnalysis(fileId, user) {
       .replace(/```json|```/g, '')
       .trim();
 
-    const aiResult = JSON.parse(rawText);
+    console.log("RAW CLAUDE RESPONSE:", rawText);
+
+let aiResult;
+
+try {
+  aiResult = JSON.parse(rawText);
+} catch (err) {
+  console.error("Erreur parsing JSON Claude:", err);
+  throw new Error(`Réponse IA invalide ou vide : ${rawText || 'réponse vide'}`);
+}
 
     // Réassociation alias → noms réels (jamais envoyé à l'IA)
     aiResult.results = aiResult.results.map(r => ({
