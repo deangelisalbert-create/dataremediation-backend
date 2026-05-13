@@ -29,7 +29,13 @@ Réponds UNIQUEMENT avec un objet JSON valide, sans markdown, sans texte avant o
     "erreurs": [],
     "suggestion": ""
   }]
-}`;
+} IMPORTANT :
+Réponds uniquement avec un JSON valide.
+Aucun texte avant.
+Aucun texte après.
+Pas de markdown.
+Pas de ```json.
+Le JSON doit commencer par { et finir par }.
 
 // ── Parser CSV simple ─────────────────────────────────────
 function parseCSV(content) {
@@ -219,11 +225,13 @@ async function runAuditAnalysis(fileId, user) {
     });
 
     const rawText = message.content
-      .map(b => b.type === 'text' ? b.text : '')
-      .join('')
-      .trim()
-      .replace(/```json|```/g, '')
-      .trim();
+  .map(b => b.type === 'text' ? b.text : '')
+  .join('')
+  .trim()
+  .replace(/^```json\s*/i, "")
+  .replace(/^```\s*/i, "")
+  .replace(/```\s*$/i, "")
+  .trim();
 
     console.log("RAW CLAUDE RESPONSE:", rawText);
 
