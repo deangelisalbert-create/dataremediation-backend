@@ -1,5 +1,6 @@
 // services/auditService.js — Cœur métier : pseudo + IA + rapport
 const fs         = require('fs');
+const XLSX = require('xlsx');
 const path       = require('path');
 const Anthropic  = require('@anthropic-ai/sdk');
 const { queryWithTenant, pool } = require('../config/database');
@@ -234,8 +235,27 @@ async function runAuditAnalysis(fileId, user) {
 
     if (!fs.existsSync(file_path)) throw new Error('Fichier physique introuvable');
 
-    const rawContent = fs.readFileSync(file_path, 'utf-8');
-    const rows = parseCSV(rawContent);
+   let rows;
+if (mime_type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+    mime_type === 'application/vnd.ms-excel' ||
+    file_path.endsWith('.xlsx') || file_path.endsWith('.xls')) {
+  // Lecture XLSX/XLS
+  const workbook = XLSX.readFile(file_path);
+  const sheetName = workbook.SheetNames[0];
+  const sheet = workbook.Sheets[sheetName];
+  rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+  // Normaliser les clés en lowercase
+  rows = rows.map(row => {
+    const normalized = {};
+    Object.keys(row).forEach(k => { normalized[k.toLowerCase().trim()] = row[k]; });
+    return normalized;
+  });
+} else {
+  // Lecture CSV
+  const rawContent = fs.readFileSync(file_path, 'utf-8');
+  rows = parseCSV(rawContent);
+}
+if (rows.length === 0) throw new Error('Aucune donnée exploitable dans le fichier');
     if (rows.length === 0) throw new Error('Aucune donnée exploitable dans le fichier');
 
     // Pseudonymisation
