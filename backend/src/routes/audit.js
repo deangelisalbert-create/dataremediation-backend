@@ -28,7 +28,7 @@ router.get('/files', async (req, res, next) => {
    ORDER BY af.uploaded_at DESC
    LIMIT 50`,
 );
-    );
+    
 
     safeLog('info', 'FILES_LISTED', {
       userId: req.user.id, tenantId: req.user.tenant_id,
