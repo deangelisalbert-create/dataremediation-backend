@@ -34,9 +34,9 @@ Réponds uniquement avec un JSON valide.
 Aucun texte avant.
 Aucun texte après.
 Pas de markdown.
-Pas de ```json.
+Pas de \`\`\`json.
 Le JSON doit commencer par { et finir par }.
-
+`;
 // ── Parser CSV simple ─────────────────────────────────────
 function parseCSV(content) {
   const lines = content.trim().split('\n').filter(l => l.trim());
