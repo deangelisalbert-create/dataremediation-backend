@@ -267,7 +267,7 @@ try {
       [
         fileId, user.tenant_id,
         csvContent, textReport,
-        JSON.stringify(aiResult.summary),
+        JSON.stringify(aiResult),
         JSON.stringify(aliasMap),
       ]
     );
