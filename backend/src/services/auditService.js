@@ -216,7 +216,7 @@ async function runAuditAnalysis(fileId, user) {
     // ── Étape 4 : Appel Claude (données pseudo uniquement) ─
     const message = await anthropic.messages.create({
       model:      'claude-haiku-4-5-20251001',
-      max_tokens: 2000,
+      max_tokens: 8000,
       system:     SYSTEM_PROMPT,
       messages: [{
         role:    'user',
