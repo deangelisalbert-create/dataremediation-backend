@@ -18,13 +18,16 @@ router.use(authenticate);
 router.get('/files', async (req, res, next) => {
   try {
     const result = await queryWithTenant(req.user.tenant_id,
-      `SELECT id, original_name, file_size, mime_type, status,
-              uploaded_at, completed_at, expires_at,
-              error_message, row_count, conformes, bloquants, taux_conformite
-       FROM audit_files
-       WHERE tenant_id = current_setting('app.tenant_id')::text
-       ORDER BY uploaded_at DESC
-       LIMIT 50`,
+  `SELECT af.id, af.original_name, af.file_size, af.mime_type, af.status,
+          af.uploaded_at, af.completed_at, af.expires_at,
+          af.error_message, af.row_count, af.conformes, af.bloquants, af.taux_conformite,
+          ar.summary
+   FROM audit_files af
+   LEFT JOIN audit_reports ar ON ar.file_id = af.id
+   WHERE af.tenant_id = current_setting('app.tenant_id')::text
+   ORDER BY af.uploaded_at DESC
+   LIMIT 50`,
+);
     );
 
     safeLog('info', 'FILES_LISTED', {
