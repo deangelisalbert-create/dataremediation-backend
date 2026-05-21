@@ -53,7 +53,7 @@ app.use(express.urlencoded({ extended: false }));
 // ── Rate limiting global ──────────────────────────────────
 const limiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
-  max:      parseInt(process.env.RATE_LIMIT_MAX) || 100,
+  max: parseInt(process.env.RATE_LIMIT_MAX) || 500,
   message:  { error: 'Trop de requêtes. Réessayez dans 15 minutes.' },
   standardHeaders: true,
   legacyHeaders:   false,
@@ -63,7 +63,7 @@ app.use('/api/', limiter);
 // ── Rate limiting renforcé sur auth ──────────────────────
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 50,  // ← était 10
+  max: 100,  // ← était 10
   message: { error: 'Trop de tentatives de connexion.' }
 });
 app.use('/api/auth/', authLimiter);
