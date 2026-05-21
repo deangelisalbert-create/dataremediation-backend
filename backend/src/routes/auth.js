@@ -5,7 +5,7 @@ const jwt       = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
 const { pool }  = require('../config/database');
 const { safeLog } = require('../middleware/errorHandler');
-// v2
+
 const router = express.Router();
 
 const JWT_SECRET          = process.env.JWT_SECRET          || 'secret';
@@ -36,7 +36,7 @@ async function sendEmail(to, subject, html) {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-    from: 'DataRemédiation <noreply@dataremediation.fr>',
+      from: 'DataRemediation <noreply@dataremediation.fr>',
       to,
       subject,
       html,
@@ -62,9 +62,9 @@ router.post('/register', async (req, res, next) => {
     if (exists.rows.length > 0)
       return res.status(409).json({ error: 'Cet email est déjà utilisé' });
 
-    const hash      = await bcrypt.hash(password, 12);
-    const tenantId  = uuidv4();
-    const userId    = uuidv4();
+    const hash     = await bcrypt.hash(password, 12);
+    const tenantId = uuidv4();
+    const userId   = uuidv4();
 
     const result = await pool.query(
       `INSERT INTO users (id, email, password_hash, company, tenant_id, role)
@@ -76,7 +76,7 @@ router.post('/register', async (req, res, next) => {
     const { accessToken, refreshToken } = generateTokens(user);
 
     await pool.query(
-      `INSERT INTO refresh_tokens (user_id, token, expires_at)
+      `INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
        VALUES ($1, $2, NOW() + INTERVAL '7 days')`,
       [user.id, refreshToken]
     );
@@ -108,7 +108,7 @@ router.post('/login', async (req, res, next) => {
     const { accessToken, refreshToken } = generateTokens(user);
 
     await pool.query(
-      `INSERT INTO refresh_tokens (user_id, token, expires_at)
+      `INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
        VALUES ($1, $2, NOW() + INTERVAL '7 days')`,
       [user.id, refreshToken]
     );
@@ -132,7 +132,7 @@ router.post('/refresh', async (req, res, next) => {
 
     const decoded = jwt.verify(refreshToken, JWT_SECRET);
     const tokenResult = await pool.query(
-      'SELECT * FROM refresh_tokens WHERE token = $1 AND expires_at > NOW()',
+      'SELECT * FROM refresh_tokens WHERE token_hash = $1 AND expires_at > NOW()',
       [refreshToken]
     );
     if (tokenResult.rows.length === 0)
@@ -145,9 +145,9 @@ router.post('/refresh', async (req, res, next) => {
     const user = userResult.rows[0];
     const { accessToken, refreshToken: newRefresh } = generateTokens(user);
 
-    await pool.query('DELETE FROM refresh_tokens WHERE token = $1', [refreshToken]);
+    await pool.query('DELETE FROM refresh_tokens WHERE token_hash = $1', [refreshToken]);
     await pool.query(
-      `INSERT INTO refresh_tokens (user_id, token, expires_at)
+      `INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
        VALUES ($1, $2, NOW() + INTERVAL '7 days')`,
       [user.id, newRefresh]
     );
@@ -164,7 +164,7 @@ router.post('/logout', async (req, res, next) => {
   try {
     const { refreshToken } = req.body;
     if (refreshToken) {
-      await pool.query('DELETE FROM refresh_tokens WHERE token = $1', [refreshToken]);
+      await pool.query('DELETE FROM refresh_tokens WHERE token_hash = $1', [refreshToken]);
     }
     res.json({ message: 'Déconnecté' });
   } catch (err) { next(err); }
@@ -181,16 +181,14 @@ router.post('/forgot-password', async (req, res, next) => {
       [email.toLowerCase()]
     );
 
-    // Toujours répondre OK pour ne pas révéler si l'email existe
     if (result.rows.length === 0) {
       return res.json({ message: 'Si cet email existe, un lien vous a été envoyé.' });
     }
 
     const user = result.rows[0];
     const resetToken = uuidv4();
-    const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 heure
+    const expiresAt  = new Date(Date.now() + 60 * 60 * 1000);
 
-    // Stocker le token de reset
     await pool.query(
       `UPDATE users SET reset_token = $1, reset_token_expires = $2 WHERE id = $3`,
       [resetToken, expiresAt, user.id]
@@ -200,12 +198,12 @@ router.post('/forgot-password', async (req, res, next) => {
 
     await sendEmail(
       user.email,
-      'Réinitialisation de votre mot de passe — DataRemédiation',
+      'Réinitialisation de votre mot de passe — DataRemediation',
       `
       <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;background:#06080f;color:#c8d4ee;padding:40px;border-radius:10px;">
         <div style="text-align:center;margin-bottom:32px;">
           <div style="font-size:32px;margin-bottom:8px;">⚡</div>
-          <h1 style="color:#00e5a0;font-size:24px;margin:0;">DataRemédiation</h1>
+          <h1 style="color:#00e5a0;font-size:24px;margin:0;">DataRemediation</h1>
         </div>
         <h2 style="color:#c8d4ee;">Réinitialisation de mot de passe</h2>
         <p>Bonjour <strong>${user.company}</strong>,</p>
@@ -215,7 +213,7 @@ router.post('/forgot-password', async (req, res, next) => {
             → Réinitialiser mon mot de passe
           </a>
         </div>
-        <p style="color:#4a5878;font-size:12px;">Ce lien expire dans <strong>1 heure</strong>. Si vous n'avez pas fait cette demande, ignorez cet email.</p>
+        <p style="color:#4a5878;font-size:12px;">Ce lien expire dans <strong>1 heure</strong>.</p>
         <p style="color:#4a5878;font-size:12px;">Lien : <a href="${resetUrl}" style="color:#3d8eff;">${resetUrl}</a></p>
       </div>
       `
