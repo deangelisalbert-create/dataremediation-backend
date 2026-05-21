@@ -33,11 +33,17 @@ async function testConnection() {
 async function runMigrations() {
   try {
     await pool.query(`
-      ALTER TABLE users
-      ADD COLUMN IF NOT EXISTS reset_token TEXT,
-      ADD COLUMN IF NOT EXISTS reset_token_expires TIMESTAMPTZ,
-      ADD COLUMN IF NOT EXISTS last_login TIMESTAMPTZ;
-    `);
+  ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS reset_token TEXT,
+  ADD COLUMN IF NOT EXISTS reset_token_expires TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS last_login TIMESTAMPTZ;
+`);
+await pool.query(`
+  ALTER TABLE refresh_tokens
+  ADD COLUMN IF NOT EXISTS token TEXT,
+  ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS user_id UUID;
+`);
     console.log('[DB] Migrations OK');
   } catch (err) {
     console.error('[DB] Erreur migration:', err.message);
