@@ -117,7 +117,7 @@ router.post('/login', async (req, res, next) => {
 
     safeLog('info', 'USER_LOGIN', { userId: user.id, tenantId: user.tenant_id });
     res.json({
-      user: { id: user.id, email: user.email, company: user.company, tenant_id: user.tenant_id, role: user.role },
+    user: { id: user.id, email: user.email, company: user.company, tenant_id: user.tenant_id, role: user.role, plan: user.plan || 'basic' },
       accessToken, refreshToken,
     });
   } catch (err) { next(err); }
