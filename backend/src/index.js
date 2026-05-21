@@ -63,7 +63,7 @@ app.use('/api/', limiter);
 // ── Rate limiting renforcé sur auth ──────────────────────
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 10,
+  max: 50,  // ← était 10
   message: { error: 'Trop de tentatives de connexion.' }
 });
 app.use('/api/auth/', authLimiter);
