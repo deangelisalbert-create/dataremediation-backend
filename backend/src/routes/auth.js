@@ -1,191 +1,160 @@
-// routes/auth.js — Inscription, connexion, refresh token, déconnexion
-const express  = require('express');
-const bcrypt   = require('bcryptjs');
-const jwt      = require('jsonwebtoken');
+// routes/auth.js
+const express   = require('express');
+const bcrypt    = require('bcryptjs');
+const jwt       = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
-const { body, validationResult } = require('express-validator');
 const { pool }  = require('../config/database');
 const { safeLog } = require('../middleware/errorHandler');
 
 const router = express.Router();
 
-// ── Helpers JWT ───────────────────────────────────────────
-function generateTokens(userId) {
-  const accessToken = jwt.sign(
-    { userId },
-    process.env.JWT_SECRET,
-    { expiresIn: process.env.JWT_EXPIRES_IN || '15m' }
-  );
-  const refreshToken = jwt.sign(
-    { userId, type: 'refresh' },
-    process.env.JWT_SECRET,
-    { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d' }
-  );
+const JWT_SECRET          = process.env.JWT_SECRET          || 'secret';
+const JWT_EXPIRES_IN      = process.env.JWT_EXPIRES_IN      || '15m';
+const JWT_REFRESH_EXPIRES = process.env.JWT_REFRESH_EXPIRES_IN || '7d';
+const FRONTEND_URL        = process.env.FRONTEND_URL        || 'http://localhost:5173';
+const RESEND_API_KEY      = process.env.RESEND_API_KEY;
+
+// ── Helpers ───────────────────────────────────────────────
+function generateTokens(user) {
+  const payload = {
+    id:        user.id,
+    email:     user.email,
+    company:   user.company,
+    tenant_id: user.tenant_id,
+    role:      user.role,
+  };
+  const accessToken  = jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+  const refreshToken = jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: JWT_REFRESH_EXPIRES });
   return { accessToken, refreshToken };
 }
 
-// ── POST /api/auth/register ───────────────────────────────
-router.post('/register',
-  [
-    body('email').isEmail().normalizeEmail().withMessage('Email invalide'),
-    body('password').isLength({ min: 8 }).withMessage('Mot de passe trop court (min. 8 caractères)'),
-    body('company').trim().isLength({ min: 2, max: 100 }).withMessage('Nom d\'entreprise requis (2-100 caractères)'),
-  ],
-  async (req, res, next) => {
-    try {
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        return res.status(400).json({ error: errors.array()[0].msg });
-      }
-
-      const { email, password, company } = req.body;
-
-      // Vérifier si email déjà utilisé
-      const existing = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
-      if (existing.rows.length > 0) {
-        return res.status(409).json({ error: 'Cet email est déjà utilisé' });
-      }
-
-      // Hacher le mot de passe
-      const passwordHash = await bcrypt.hash(password, 12);
-      const tenantId = uuidv4();
-
-      // Créer l'utilisateur
-      const { rows } = await pool.query(
-        `INSERT INTO users (email, password_hash, company, tenant_id, role)
-         VALUES ($1, $2, $3, $4, 'client')
-         RETURNING id, email, company, tenant_id, role`,
-        [email, passwordHash, company, tenantId]
-      );
-
-      const user = rows[0];
-      const tokens = generateTokens(user.id);
-
-      // Stocker le refresh token
-      await pool.query(
-        `INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
-         VALUES ($1, $2, NOW() + INTERVAL '7 days')`,
-        [user.id, await bcrypt.hash(tokens.refreshToken, 8)]
-      );
-
-      safeLog('info', 'USER_REGISTERED', { userId: user.id, tenantId: user.tenant_id });
-
-      res.status(201).json({
-        accessToken: tokens.accessToken,
-        refreshToken: tokens.refreshToken,
-        user: {
-          id:       user.id,
-          email:    user.email,
-          company:  user.company,
-          tenantId: user.tenant_id,
-          role:     user.role,
-        }
-      });
-    } catch (err) { next(err); }
+async function sendEmail(to, subject, html) {
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${RESEND_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from: 'DataRemédiation <noreply@dataremediation.fr>',
+      to,
+      subject,
+      html,
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Email error: ${err}`);
   }
-);
+  return res.json();
+}
+
+// ── POST /api/auth/register ───────────────────────────────
+router.post('/register', async (req, res, next) => {
+  try {
+    const { company, email, password } = req.body;
+    if (!company || !email || !password)
+      return res.status(400).json({ error: 'Champs requis manquants' });
+    if (password.length < 8)
+      return res.status(400).json({ error: 'Mot de passe trop court (8 caractères min)' });
+
+    const exists = await pool.query('SELECT id FROM users WHERE email = $1', [email.toLowerCase()]);
+    if (exists.rows.length > 0)
+      return res.status(409).json({ error: 'Cet email est déjà utilisé' });
+
+    const hash      = await bcrypt.hash(password, 12);
+    const tenantId  = uuidv4();
+    const userId    = uuidv4();
+
+    const result = await pool.query(
+      `INSERT INTO users (id, email, password_hash, company, tenant_id, role)
+       VALUES ($1, $2, $3, $4, $5, 'client') RETURNING id, email, company, tenant_id, role`,
+      [userId, email.toLowerCase(), hash, company, tenantId]
+    );
+
+    const user = result.rows[0];
+    const { accessToken, refreshToken } = generateTokens(user);
+
+    await pool.query(
+      `INSERT INTO refresh_tokens (user_id, token, expires_at)
+       VALUES ($1, $2, NOW() + INTERVAL '7 days')`,
+      [user.id, refreshToken]
+    );
+
+    safeLog('info', 'USER_REGISTERED', { userId: user.id, tenantId: user.tenant_id });
+    res.status(201).json({ user, accessToken, refreshToken });
+  } catch (err) { next(err); }
+});
 
 // ── POST /api/auth/login ──────────────────────────────────
-router.post('/login',
-  [
-    body('email').isEmail().normalizeEmail(),
-    body('password').notEmpty(),
-  ],
-  async (req, res, next) => {
-    try {
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        return res.status(400).json({ error: 'Email ou mot de passe invalide' });
-      }
+router.post('/login', async (req, res, next) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password)
+      return res.status(400).json({ error: 'Email et mot de passe requis' });
 
-      const { email, password } = req.body;
+    const result = await pool.query(
+      'SELECT * FROM users WHERE email = $1 AND is_active = true',
+      [email.toLowerCase()]
+    );
+    if (result.rows.length === 0)
+      return res.status(401).json({ error: 'Email ou mot de passe incorrect' });
 
-      const { rows } = await pool.query(
-        'SELECT id, email, password_hash, company, tenant_id, role, is_active FROM users WHERE email = $1',
-        [email]
-      );
+    const user = result.rows[0];
+    const valid = await bcrypt.compare(password, user.password_hash);
+    if (!valid)
+      return res.status(401).json({ error: 'Email ou mot de passe incorrect' });
 
-      if (rows.length === 0) {
-        // Délai constant pour éviter le timing attack
-        await bcrypt.hash('dummy', 12);
-        return res.status(401).json({ error: 'Email ou mot de passe incorrect' });
-      }
+    const { accessToken, refreshToken } = generateTokens(user);
 
-      const user = rows[0];
+    await pool.query(
+      `INSERT INTO refresh_tokens (user_id, token, expires_at)
+       VALUES ($1, $2, NOW() + INTERVAL '7 days')`,
+      [user.id, refreshToken]
+    );
 
-      if (!user.is_active) {
-        return res.status(403).json({ error: 'Compte désactivé. Contactez le support.' });
-      }
+    await pool.query('UPDATE users SET last_login = NOW() WHERE id = $1', [user.id]);
 
-      const validPassword = await bcrypt.compare(password, user.password_hash);
-      if (!validPassword) {
-        return res.status(401).json({ error: 'Email ou mot de passe incorrect' });
-      }
-
-      const tokens = generateTokens(user.id);
-
-      // Stocker le refresh token
-      await pool.query(
-        `INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
-         VALUES ($1, $2, NOW() + INTERVAL '7 days')`,
-        [user.id, await bcrypt.hash(tokens.refreshToken, 8)]
-      );
-
-      // Mettre à jour last_login
-      await pool.query('UPDATE users SET last_login = NOW() WHERE id = $1', [user.id]);
-
-      safeLog('info', 'USER_LOGIN', { userId: user.id, tenantId: user.tenant_id });
-
-      res.json({
-        accessToken: tokens.accessToken,
-        refreshToken: tokens.refreshToken,
-        user: {
-          id:       user.id,
-          email:    user.email,
-          company:  user.company,
-          tenantId: user.tenant_id,
-          role:     user.role,
-        }
-      });
-    } catch (err) { next(err); }
-  }
-);
+    safeLog('info', 'USER_LOGIN', { userId: user.id, tenantId: user.tenant_id });
+    res.json({
+      user: { id: user.id, email: user.email, company: user.company, tenant_id: user.tenant_id, role: user.role },
+      accessToken, refreshToken,
+    });
+  } catch (err) { next(err); }
+});
 
 // ── POST /api/auth/refresh ────────────────────────────────
 router.post('/refresh', async (req, res, next) => {
   try {
     const { refreshToken } = req.body;
-    if (!refreshToken) return res.status(401).json({ error: 'Refresh token manquant' });
+    if (!refreshToken)
+      return res.status(401).json({ error: 'Refresh token manquant' });
 
-    const decoded = jwt.verify(refreshToken, process.env.JWT_SECRET);
-    if (decoded.type !== 'refresh') return res.status(401).json({ error: 'Token invalide' });
+    const decoded = jwt.verify(refreshToken, JWT_SECRET);
+    const tokenResult = await pool.query(
+      'SELECT * FROM refresh_tokens WHERE token = $1 AND expires_at > NOW()',
+      [refreshToken]
+    );
+    if (tokenResult.rows.length === 0)
+      return res.status(401).json({ error: 'Token invalide ou expiré' });
 
-    // Vérifier que le token est en base (non révoqué)
-    const { rows } = await pool.query(
-      `SELECT rt.id, u.id as user_id, u.tenant_id, u.role, u.is_active, rt.token_hash
-       FROM refresh_tokens rt
-       JOIN users u ON u.id = rt.user_id
-       WHERE rt.user_id = $1 AND rt.expires_at > NOW() AND rt.revoked = false`,
-      [decoded.userId]
+    const userResult = await pool.query('SELECT * FROM users WHERE id = $1', [decoded.id]);
+    if (userResult.rows.length === 0)
+      return res.status(401).json({ error: 'Utilisateur introuvable' });
+
+    const user = userResult.rows[0];
+    const { accessToken, refreshToken: newRefresh } = generateTokens(user);
+
+    await pool.query('DELETE FROM refresh_tokens WHERE token = $1', [refreshToken]);
+    await pool.query(
+      `INSERT INTO refresh_tokens (user_id, token, expires_at)
+       VALUES ($1, $2, NOW() + INTERVAL '7 days')`,
+      [user.id, newRefresh]
     );
 
-    if (rows.length === 0) return res.status(401).json({ error: 'Session expirée' });
-
-    // Vérifier le hash du token
-    const valid = await Promise.any(
-      rows.map(r => bcrypt.compare(refreshToken, r.token_hash))
-    ).catch(() => false);
-
-    if (!valid) return res.status(401).json({ error: 'Token révoqué' });
-    if (!rows[0].is_active) return res.status(403).json({ error: 'Compte désactivé' });
-
-    const tokens = generateTokens(decoded.userId);
-
-    res.json({ accessToken: tokens.accessToken, refreshToken: tokens.refreshToken });
+    res.json({ accessToken, refreshToken: newRefresh });
   } catch (err) {
-    if (err.name === 'JsonWebTokenError' || err.name === 'TokenExpiredError') {
-      return res.status(401).json({ error: 'Session invalide' });
-    }
+    if (err.name === 'JsonWebTokenError') return res.status(401).json({ error: 'Token invalide' });
     next(err);
   }
 });
@@ -195,17 +164,96 @@ router.post('/logout', async (req, res, next) => {
   try {
     const { refreshToken } = req.body;
     if (refreshToken) {
-      // Révoquer tous les refresh tokens de cette session
-      const decoded = jwt.decode(refreshToken);
-      if (decoded?.userId) {
-        await pool.query(
-          'UPDATE refresh_tokens SET revoked = true WHERE user_id = $1',
-          [decoded.userId]
-        );
-      }
+      await pool.query('DELETE FROM refresh_tokens WHERE token = $1', [refreshToken]);
     }
-    safeLog('info', 'USER_LOGOUT', {});
-    res.json({ message: 'Déconnexion réussie' });
+    res.json({ message: 'Déconnecté' });
+  } catch (err) { next(err); }
+});
+
+// ── POST /api/auth/forgot-password ───────────────────────
+router.post('/forgot-password', async (req, res, next) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email requis' });
+
+    const result = await pool.query(
+      'SELECT id, email, company FROM users WHERE email = $1 AND is_active = true',
+      [email.toLowerCase()]
+    );
+
+    // Toujours répondre OK pour ne pas révéler si l'email existe
+    if (result.rows.length === 0) {
+      return res.json({ message: 'Si cet email existe, un lien vous a été envoyé.' });
+    }
+
+    const user = result.rows[0];
+    const resetToken = uuidv4();
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 heure
+
+    // Stocker le token de reset
+    await pool.query(
+      `UPDATE users SET reset_token = $1, reset_token_expires = $2 WHERE id = $3`,
+      [resetToken, expiresAt, user.id]
+    );
+
+    const resetUrl = `${FRONTEND_URL}/reset-password?token=${resetToken}`;
+
+    await sendEmail(
+      user.email,
+      'Réinitialisation de votre mot de passe — DataRemédiation',
+      `
+      <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;background:#06080f;color:#c8d4ee;padding:40px;border-radius:10px;">
+        <div style="text-align:center;margin-bottom:32px;">
+          <div style="font-size:32px;margin-bottom:8px;">⚡</div>
+          <h1 style="color:#00e5a0;font-size:24px;margin:0;">DataRemédiation</h1>
+        </div>
+        <h2 style="color:#c8d4ee;">Réinitialisation de mot de passe</h2>
+        <p>Bonjour <strong>${user.company}</strong>,</p>
+        <p>Vous avez demandé la réinitialisation de votre mot de passe. Cliquez sur le bouton ci-dessous :</p>
+        <div style="text-align:center;margin:32px 0;">
+          <a href="${resetUrl}" style="background:#00e5a0;color:#000;padding:14px 32px;border-radius:6px;text-decoration:none;font-weight:bold;font-size:14px;">
+            → Réinitialiser mon mot de passe
+          </a>
+        </div>
+        <p style="color:#4a5878;font-size:12px;">Ce lien expire dans <strong>1 heure</strong>. Si vous n'avez pas fait cette demande, ignorez cet email.</p>
+        <p style="color:#4a5878;font-size:12px;">Lien : <a href="${resetUrl}" style="color:#3d8eff;">${resetUrl}</a></p>
+      </div>
+      `
+    );
+
+    safeLog('info', 'PASSWORD_RESET_REQUESTED', { userId: user.id });
+    res.json({ message: 'Si cet email existe, un lien vous a été envoyé.' });
+  } catch (err) { next(err); }
+});
+
+// ── POST /api/auth/reset-password ────────────────────────
+router.post('/reset-password', async (req, res, next) => {
+  try {
+    const { token, password } = req.body;
+    if (!token || !password)
+      return res.status(400).json({ error: 'Token et mot de passe requis' });
+    if (password.length < 8)
+      return res.status(400).json({ error: 'Mot de passe trop court (8 caractères min)' });
+
+    const result = await pool.query(
+      `SELECT id FROM users
+       WHERE reset_token = $1 AND reset_token_expires > NOW() AND is_active = true`,
+      [token]
+    );
+
+    if (result.rows.length === 0)
+      return res.status(400).json({ error: 'Lien invalide ou expiré' });
+
+    const hash = await bcrypt.hash(password, 12);
+
+    await pool.query(
+      `UPDATE users SET password_hash = $1, reset_token = NULL, reset_token_expires = NULL
+       WHERE id = $2`,
+      [hash, result.rows[0].id]
+    );
+
+    safeLog('info', 'PASSWORD_RESET_DONE', { userId: result.rows[0].id });
+    res.json({ message: 'Mot de passe réinitialisé avec succès' });
   } catch (err) { next(err); }
 });
 
