@@ -11,7 +11,7 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const SYSTEM_PROMPT = `Tu es un Expert Conformité e-Invoicing France 2026.
 Tu reçois des données fournisseurs PSEUDONYMISÉES (alias FOURN_XXX — jamais de vrais noms).
 RÈGLES DE VALIDATION :
-- SIRET : exactement 14 chiffres numériques
+- SIRET : 14 chiffres numériques OU SIREN : 9 chiffres numériques
 - TVA FR : format "FR" + 2 caractères alphanumériques + 9 chiffres (SIREN). Ex: FR83352600820
 - Cohérence SIREN : les 9 premiers chiffres du SIRET doivent correspondre aux 9 derniers chiffres de la TVA
 - Doublon : même SIREN sous deux alias différents
@@ -59,17 +59,28 @@ function pseudonymize(rows) {
   const pseudoRows = rows.map((row, i) => {
     const alias = `FOURN_${String(i + 1).padStart(3, '0')}`;
 
+    // Trouver la colonne nom
     const nomKey = Object.keys(row).find(k =>
-      ['nom', 'name', 'raison', 'soci', 'libelle', 'fournisseur', 'denomination'].some(t => k.includes(t))
+      ['dénomination', 'denomination', 'nom', 'name', 'raison', 'soci', 'libelle', 'fournisseur'].some(t =>
+        k.toLowerCase().includes(t.toLowerCase())
+      )
     ) || Object.keys(row)[0];
 
-    aliasMap[alias] = row[nomKey] || alias;
+    aliasMap[alias] = String(row[nomKey] || alias).trim();
 
-    return {
-      alias,
-     siret: (row.siret || row.siren || row.SIRET || row['n° siret'] || row['siret'] || '').replace(/[\s.]/g, ''),
-tva:   (row['numéro de tva'] || row['numero de tva'] || row.tva || row.TVA || row['n° tva'] || '').replace(/[\s]/g, '').toUpperCase(),
-    };
+    // Trouver SIREN/SIRET
+    const sirenKey = Object.keys(row).find(k =>
+      ['siren', 'siret'].some(t => k.toLowerCase().includes(t))
+    );
+    const sirenVal = sirenKey ? String(row[sirenKey] || '').replace(/[\s.]/g, '') : '';
+
+    // Trouver TVA
+    const tvaKey = Object.keys(row).find(k =>
+      ['tva', 'vat'].some(t => k.toLowerCase().includes(t))
+    );
+    const tvaVal = tvaKey ? String(row[tvaKey] || '').replace(/[\s]/g, '').toUpperCase() : '';
+
+    return { alias, siret: sirenVal, tva: tvaVal };
   });
 
   return { pseudoRows, aliasMap };
