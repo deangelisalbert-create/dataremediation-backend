@@ -14,7 +14,7 @@ async function authenticate(req, res, next) {
 
     // Vérifie que l'utilisateur existe encore en base
     const { rows } = await pool.query(
-      'SELECT id, email, company, tenant_id, role FROM users WHERE id = $1 AND is_active = true',
+      'SELECT id, email, company, tenant_id, role, plan FROM users WHERE id = $1 AND is_active = true',
      [decoded.id]
     );
 
