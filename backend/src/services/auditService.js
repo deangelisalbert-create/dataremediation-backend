@@ -1,22 +1,33 @@
 // services/auditService.js — Cœur métier : pseudo + IA + rapport
 const fs         = require('fs');
-const XLSX = require('xlsx');
 const path       = require('path');
 const Anthropic  = require('@anthropic-ai/sdk');
 const { queryWithTenant, pool } = require('../config/database');
 const { safeLog } = require('../middleware/errorHandler');
+const XLSX       = require('xlsx');
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const SYSTEM_PROMPT = `Tu es un Expert Conformité e-Invoicing France 2026.
 Tu reçois des données fournisseurs PSEUDONYMISÉES (alias FOURN_XXX — jamais de vrais noms).
-RÈGLES DE VALIDATION :
-- SIRET : 14 chiffres numériques OU SIREN : 9 chiffres numériques
-- TVA FR : format "FR" + 2 caractères alphanumériques + 9 chiffres (SIREN). Ex: FR83352600820
-- Cohérence SIREN : les 9 premiers chiffres du SIRET doivent correspondre aux 9 derniers chiffres de la TVA
-- Doublon : même SIREN sous deux alias différents
 
-STATUTS : "Conforme" | "A corriger" | "Bloquant"
+RÈGLES DE VALIDATION :
+- SIREN/SIRET : accepter 9 chiffres numériques (SIREN) OU 14 chiffres numériques (SIRET complet)
+- TVA FR : format "FR" + 2 caractères alphanumériques + 9 chiffres. Ex: FR83352600820
+- Cohérence SIREN : le SIREN (9 chiffres) doit correspondre aux 9 derniers chiffres de la TVA
+- Doublon : même SIREN sous deux alias différents
+- Si siret/siren contient du texte non numérique (ex: "TRANSPORT", "HOTEL") → invalide
+
+STATUTS :
+- "Conforme" : SIREN ou SIRET valide (9 ou 14 chiffres) ET TVA valide ET cohérence OK
+- "A corriger" : SIREN valide (9 chiffres) mais SIRET incomplet OU TVA manquante/incorrecte
+- "Bloquant" : données absentes ou texte non numérique
+
+RECOMMANDATIONS OBLIGATOIRES :
+- Si statut "Conforme" avec SIREN 9 chiffres : suggestion = "Conforme 2024. Pour e-Invoicing 2026 : compléter en SIRET 14 chiffres (ajouter le code NIC 5 chiffres)"
+- Si statut "Conforme" avec SIRET 14 chiffres : suggestion = "Conforme e-Invoicing 2026"
+- Si statut "A corriger" : expliquer ce qui manque
+- Si statut "Bloquant" : expliquer le problème et comment le corriger
 
 Réponds UNIQUEMENT avec un objet JSON valide, sans markdown, sans texte avant ou après :
 {
@@ -27,7 +38,7 @@ Réponds UNIQUEMENT avec un objet JSON valide, sans markdown, sans texte avant o
     "tva_ok": true,
     "siren_coherent": true,
     "erreurs": [],
-    "suggestion": ""
+    "suggestion": "Conforme 2024. Pour e-Invoicing 2026 : compléter en SIRET 14 chiffres (ajouter le code NIC 5 chiffres)"
   }]
 }
 Le JSON doit commencer par { et finir par }.
@@ -59,24 +70,22 @@ function pseudonymize(rows) {
   const pseudoRows = rows.map((row, i) => {
     const alias = `FOURN_${String(i + 1).padStart(3, '0')}`;
 
-    // Trouver la colonne nom
-    // Chercher d'abord "denomination" exactement, puis fallback
-const nomKey = 
-  Object.keys(row).find(k => k.toLowerCase().trim() === 'dénomination') ||
-  Object.keys(row).find(k => k.toLowerCase().trim() === 'denomination') ||
-  Object.keys(row).find(k => k.toLowerCase().includes('dénom')) ||
-  Object.keys(row).find(k => k.toLowerCase().includes('denom')) ||
-  Object.keys(row).find(k => ['nom', 'name', 'raison', 'libelle'].some(t => k.toLowerCase().includes(t))) ||
-  Object.keys(row)[2] || Object.keys(row)[0];
+    const nomKey =
+      Object.keys(row).find(k => k.toLowerCase().trim() === 'dénomination') ||
+      Object.keys(row).find(k => k.toLowerCase().trim() === 'denomination') ||
+      Object.keys(row).find(k => k.toLowerCase().includes('dénom')) ||
+      Object.keys(row).find(k => k.toLowerCase().includes('denom')) ||
+      Object.keys(row).find(k => ['nom', 'name', 'raison', 'libelle'].some(t => k.toLowerCase().includes(t))) ||
+      Object.keys(row)[2] ||
+      Object.keys(row)[0];
+
     aliasMap[alias] = String(row[nomKey] || alias).trim();
 
-    // Trouver SIREN/SIRET
     const sirenKey = Object.keys(row).find(k =>
       ['siren', 'siret'].some(t => k.toLowerCase().includes(t))
     );
     const sirenVal = sirenKey ? String(row[sirenKey] || '').replace(/[\s.]/g, '') : '';
 
-    // Trouver TVA
     const tvaKey = Object.keys(row).find(k =>
       ['tva', 'vat'].some(t => k.toLowerCase().includes(t))
     );
@@ -109,22 +118,21 @@ async function analyzeWithClaude(batch, batchIndex) {
     .replace(/```\s*$/i, '')
     .trim();
 
-  console.log(`[BATCH ${batchIndex + 1}] RAW:`, rawText.slice(0, 200));
+  console.log(`[BATCH ${batchIndex + 1}] RAW:`, rawText.slice(0, 300));
 
   try {
     const parsed = JSON.parse(rawText);
     return parsed.results || [];
   } catch (err) {
     console.error(`[BATCH ${batchIndex + 1}] Erreur parsing:`, err.message);
-    // En cas d'erreur de parsing, retourner des résultats d'erreur pour ce lot
     return batch.map(r => ({
-      alias: r.alias,
-      statut: 'Bloquant',
-      siret_ok: false,
-      tva_ok: false,
+      alias:          r.alias,
+      statut:         'Bloquant',
+      siret_ok:       false,
+      tva_ok:         false,
       siren_coherent: false,
-      erreurs: ['Erreur analyse IA pour ce lot'],
-      suggestion: 'Réessayer l\'analyse',
+      erreurs:        ['Erreur analyse IA pour ce lot'],
+      suggestion:     'Réessayer l\'analyse',
     }));
   }
 }
@@ -133,8 +141,8 @@ async function analyzeWithClaude(batch, batchIndex) {
 function buildCSVReport(results, aliasMap) {
   const BOM = '\uFEFF';
   const header = [
-    'Nom d\'origine', 'Alias', 'Statut', 'SIRET valide', 'TVA valide',
-    'Cohérence SIREN', 'Erreurs', 'Suggestion'
+    'Nom d\'origine', 'Alias', 'Statut', 'SIRET/SIREN valide', 'TVA valide',
+    'Cohérence SIREN', 'Erreurs', 'Recommandation e-Invoicing 2026'
   ].join(';');
 
   const rows = results.map(r => [
@@ -178,17 +186,20 @@ function buildTextReport(fileInfo, allResults, summary, aliasMap) {
     `  À corriger        : ${summary.a_corriger}`,
     `  Bloquants         : ${summary.bloquants}`,
     '',
+    '  NOTE : Les fournisseurs "Conformes" avec SIREN (9 chiffres) devront',
+    '  compléter leur identifiant en SIRET (14 chiffres) pour e-Invoicing 2026.',
+    '',
     sub,
     '  DÉTAIL PAR FOURNISSEUR',
     sub,
     '',
     ...allResults.flatMap(r => [
       `  ${r.statut}  ${aliasMap[r.alias] || r.alias}`,
-      `    SIRET    : ${r.siret_ok    ? '✓ Valide'   : '✗ Invalide/Manquant'}`,
-      `    TVA      : ${r.tva_ok      ? '✓ Valide'   : '✗ Invalide/Manquant'}`,
-      `    SIREN    : ${r.siren_coherent ? '✓ Cohérent' : '✗ Incohérent'}`,
-      ...(r.erreurs?.length ? [`    Erreurs  : ${r.erreurs.join(', ')}`] : []),
-      ...(r.suggestion      ? [`    Conseil  : ${r.suggestion}`]         : []),
+      `    SIRET/SIREN : ${r.siret_ok    ? '✓ Valide'   : '✗ Invalide/Manquant'}`,
+      `    TVA         : ${r.tva_ok      ? '✓ Valide'   : '✗ Invalide/Manquant'}`,
+      `    SIREN       : ${r.siren_coherent ? '✓ Cohérent' : '✗ Incohérent'}`,
+      ...(r.erreurs?.length ? [`    Erreurs     : ${r.erreurs.join(', ')}`] : []),
+      ...(r.suggestion      ? [`    Conseil     : ${r.suggestion}`]         : []),
       '',
     ]),
     sep,
@@ -222,7 +233,6 @@ async function runAuditAnalysis(fileId, user) {
     await updateStatus('analyzing', { analysis_started_at: new Date() });
     safeLog('info', 'AUDIT_STARTED', { userId: user.id, tenantId: user.tenant_id });
 
-    // Lire le fichier
     const fileResult = await pool.query(
       'SELECT file_path, mime_type, original_name FROM audit_files WHERE id = $1',
       [fileId]
@@ -231,7 +241,6 @@ async function runAuditAnalysis(fileId, user) {
 
     const { file_path, mime_type, original_name } = fileResult.rows[0];
 
-    // PDF : pas d'analyse SIRET/TVA
     if (mime_type === 'application/pdf') {
       await updateStatus('done', {
         completed_at: new Date(),
@@ -248,50 +257,47 @@ async function runAuditAnalysis(fileId, user) {
 
     if (!fs.existsSync(file_path)) throw new Error('Fichier physique introuvable');
 
-   let rows;
-if (mime_type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
-    mime_type === 'application/vnd.ms-excel' ||
-    file_path.endsWith('.xlsx') || file_path.endsWith('.xls')) {
-  // Lecture XLSX/XLS
-  const workbook = XLSX.readFile(file_path);
-  const sheetName = workbook.SheetNames[0];
-  const sheet = workbook.Sheets[sheetName];
-  rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
-  // Normaliser les clés en lowercase
-  rows = rows.map(row => {
-    const normalized = {};
-    Object.keys(row).forEach(k => { normalized[k.toLowerCase().trim()] = row[k]; });
-    return normalized;
-  });
-} else {
-  // Lecture CSV
-  const rawContent = fs.readFileSync(file_path, 'utf-8');
-  rows = parseCSV(rawContent);
-}
-if (rows.length === 0) throw new Error('Aucune donnée exploitable dans le fichier');
+    let rows;
+    if (
+      mime_type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+      mime_type === 'application/vnd.ms-excel' ||
+      file_path.endsWith('.xlsx') || file_path.endsWith('.xls')
+    ) {
+      const workbook = XLSX.readFile(file_path);
+      const sheetName = workbook.SheetNames[0];
+      const sheet = workbook.Sheets[sheetName];
+      rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+      rows = rows.map(row => {
+        const normalized = {};
+        Object.keys(row).forEach(k => { normalized[k.toLowerCase().trim()] = String(row[k] || ''); });
+        return normalized;
+      });
+    } else {
+      const rawContent = fs.readFileSync(file_path, 'utf-8');
+      rows = parseCSV(rawContent);
+    }
+
     if (rows.length === 0) throw new Error('Aucune donnée exploitable dans le fichier');
 
-    // Pseudonymisation
     const { pseudoRows, aliasMap } = pseudonymize(rows);
     safeLog('info', 'DATA_PSEUDONYMIZED', {
       userId: user.id, tenantId: user.tenant_id, rowCount: pseudoRows.length
     });
 
-    // ── Traitement par lots de BATCH_SIZE ─────────────────
+    // Traitement par lots
     const allResults = [];
     const totalBatches = Math.ceil(pseudoRows.length / BATCH_SIZE);
-
-    console.log(`[AUDIT] ${pseudoRows.length} fournisseurs → ${totalBatches} lot(s) de ${BATCH_SIZE}`);
+    console.log(`[AUDIT] ${pseudoRows.length} fournisseurs → ${totalBatches} lot(s)`);
 
     for (let i = 0; i < pseudoRows.length; i += BATCH_SIZE) {
       const batch = pseudoRows.slice(i, i + BATCH_SIZE);
       const batchIndex = Math.floor(i / BATCH_SIZE);
-      console.log(`[AUDIT] Lot ${batchIndex + 1}/${totalBatches} — ${batch.length} fournisseurs`);
+      console.log(`[AUDIT] Lot ${batchIndex + 1}/${totalBatches}`);
       const batchResults = await analyzeWithClaude(batch, batchIndex);
       allResults.push(...batchResults);
     }
 
-    // Calcul du summary global
+    // Calcul summary global
     const conformes  = allResults.filter(r => (r.statut||'').includes('Conforme')).length;
     const a_corriger = allResults.filter(r => (r.statut||'').includes('corriger')).length;
     const bloquants  = allResults.filter(r => (r.statut||'').includes('Bloquant')).length;
@@ -299,7 +305,6 @@ if (rows.length === 0) throw new Error('Aucune donnée exploitable dans le fichi
 
     const summary = { total: allResults.length, conformes, a_corriger, bloquants, taux };
 
-    // Réassociation alias → noms réels
     const resultsWithNoms = allResults.map(r => ({
       ...r,
       nom_reel: aliasMap[r.alias] || r.alias,
@@ -307,14 +312,12 @@ if (rows.length === 0) throw new Error('Aucune donnée exploitable dans le fichi
 
     const aiResult = { summary, results: resultsWithNoms, aliasMap };
 
-    // Générer les rapports
     const csvContent = buildCSVReport(resultsWithNoms, aliasMap);
     const textReport = buildTextReport(
       { originalName: original_name, tenantId: user.tenant_id },
       resultsWithNoms, summary, aliasMap
     );
 
-    // Sauvegarder en base
     await pool.query(
       `INSERT INTO audit_reports (file_id, tenant_id, csv_content, pdf_content, summary, alias_map)
        VALUES ($1, $2, $3, $4, $5, $6)
@@ -328,13 +331,11 @@ if (rows.length === 0) throw new Error('Aucune donnée exploitable dans le fichi
       ]
     );
 
-    // Supprimer le fichier source
     if (fs.existsSync(file_path)) {
       fs.unlinkSync(file_path);
       safeLog('info', 'SOURCE_FILE_PURGED', { userId: user.id, tenantId: user.tenant_id });
     }
 
-    // Statut final
     await updateStatus('done', {
       completed_at:    new Date(),
       row_count:       summary.total,
