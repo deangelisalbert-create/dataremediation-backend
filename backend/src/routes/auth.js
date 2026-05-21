@@ -5,7 +5,7 @@ const jwt       = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
 const { pool }  = require('../config/database');
 const { safeLog } = require('../middleware/errorHandler');
-
+// v2
 const router = express.Router();
 
 const JWT_SECRET          = process.env.JWT_SECRET          || 'secret';
