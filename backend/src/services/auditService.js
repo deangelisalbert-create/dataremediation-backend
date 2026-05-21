@@ -67,10 +67,7 @@ const nomKey =
   Object.keys(row).find(k => k.toLowerCase().includes('dénom')) ||
   Object.keys(row).find(k => k.toLowerCase().includes('denom')) ||
   Object.keys(row).find(k => ['nom', 'name', 'raison', 'libelle'].some(t => k.toLowerCase().includes(t))) ||
-  Object.keys(row)[2]; // Colonne C = index 2 = Dénomination
-      )
-    ) || Object.keys(row)[0];
-
+  Object.keys(row)[2] || Object.keys(row)[0];
     aliasMap[alias] = String(row[nomKey] || alias).trim();
 
     // Trouver SIREN/SIRET
