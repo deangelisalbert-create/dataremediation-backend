@@ -1,6 +1,7 @@
 // routes/reports.js — Téléchargement rapports avec liens temporaires
 const express = require('express');
 const jwt     = require('jsonwebtoken');
+const XLSX    = require('xlsx');
 const { authenticate, checkRole } = require('../middleware/authenticate');
 const { queryWithTenant, pool } = require('../config/database');
 const { safeLog } = require('../middleware/errorHandler');
@@ -21,7 +22,6 @@ router.post('/:fileId/link',
         return res.status(400).json({ error: 'Type invalide (csv ou pdf)' });
       }
 
-      // Vérifier que le fichier appartient au tenant et est terminé
       const result = await queryWithTenant(req.user.tenant_id,
         `SELECT id, status FROM audit_files
          WHERE id = $1
@@ -34,7 +34,6 @@ router.post('/:fileId/link',
         return res.status(404).json({ error: 'Rapport introuvable ou analyse non terminée' });
       }
 
-      // Générer un token de téléchargement signé (TTL court)
       const downloadToken = jwt.sign(
         {
           fileId,
@@ -67,7 +66,6 @@ router.get('/download/:token', async (req, res, next) => {
   try {
     const { token } = req.params;
 
-    // Vérifier le token de téléchargement
     let decoded;
     try {
       decoded = jwt.verify(token, process.env.JWT_SECRET);
@@ -79,7 +77,6 @@ router.get('/download/:token', async (req, res, next) => {
       return res.status(401).json({ error: 'Token invalide' });
     }
 
-    // Récupérer le rapport
     const result = await pool.query(
       `SELECT af.original_name, ar.csv_content, ar.pdf_content, ar.summary
        FROM audit_files af
@@ -95,17 +92,151 @@ router.get('/download/:token', async (req, res, next) => {
     const row = result.rows[0];
     const baseName = row.original_name.replace(/\.[^.]+$/, '');
 
+    // ── Export Excel ──────────────────────────────────────
     if (decoded.type === 'csv') {
-      const csvContent = row.csv_content || 'Aucune donnée';
-      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-      res.setHeader('Content-Disposition', `attachment; filename="rapport_${baseName}.csv"`);
-      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-      return res.send('\uFEFF' + csvContent); // BOM pour Excel FR
+      try {
+        // Parser le summary pour récupérer les résultats
+        const summaryData = typeof row.summary === 'string'
+          ? JSON.parse(row.summary)
+          : row.summary;
+
+        const results  = summaryData?.results  || [];
+        const aliasMap = summaryData?.aliasMap  || {};
+        const summary  = summaryData?.summary   || {};
+
+        const wb = XLSX.utils.book_new();
+
+        // ── Feuille 1 : Résumé ────────────────────────────
+        const resumeData = [
+          ['RAPPORT DE CONFORMITÉ e-INVOICING 2026'],
+          ['DataRemédiation — Confidentiel'],
+          [],
+          ['Fichier analysé', row.original_name],
+          ['Date de génération', new Date().toLocaleDateString('fr-FR')],
+          [],
+          ['RÉSUMÉ'],
+          ['Total fournisseurs', summary.total || results.length],
+          ['Conformes',          summary.conformes  || 0],
+          ['À corriger',         summary.a_corriger || 0],
+          ['Bloquants',          summary.bloquants  || 0],
+          ['Taux de conformité', `${summary.taux || 0}%`],
+          [],
+          ['NOTE : Les fournisseurs "Conformes" avec SIREN (9 chiffres) devront compléter'],
+          ['leur identifiant en SIRET (14 chiffres) pour la conformité e-Invoicing 2026.'],
+        ];
+
+        const wsResume = XLSX.utils.aoa_to_sheet(resumeData);
+
+        // Style titre
+        wsResume['A1'] = { v: 'RAPPORT DE CONFORMITÉ e-INVOICING 2026', t: 's' };
+        wsResume['!cols'] = [{ wch: 30 }, { wch: 50 }];
+        XLSX.utils.book_append_sheet(wb, wsResume, 'Résumé');
+
+        // ── Feuille 2 : Détail fournisseurs ───────────────
+        const headers = [
+          'Nom fournisseur',
+          'Alias',
+          'Statut',
+          'SIRET/SIREN valide',
+          'TVA valide',
+          'Cohérence SIREN',
+          'Erreurs',
+          'Recommandation e-Invoicing 2026',
+        ];
+
+        const detailData = [headers];
+
+        results.forEach(r => {
+          detailData.push([
+            r.nom_reel || aliasMap[r.alias] || r.alias,
+            r.alias,
+            r.statut || '',
+            r.siret_ok ? 'OUI' : 'NON',
+            r.tva_ok   ? 'OUI' : 'NON',
+            r.siren_coherent ? 'OUI' : 'NON',
+            (r.erreurs || []).join(' | '),
+            r.suggestion || '',
+          ]);
+        });
+
+        const wsDetail = XLSX.utils.aoa_to_sheet(detailData);
+
+        // Largeurs colonnes
+        wsDetail['!cols'] = [
+          { wch: 35 }, // Nom
+          { wch: 12 }, // Alias
+          { wch: 15 }, // Statut
+          { wch: 18 }, // SIRET
+          { wch: 12 }, // TVA
+          { wch: 18 }, // SIREN
+          { wch: 40 }, // Erreurs
+          { wch: 60 }, // Recommandation
+        ];
+
+        XLSX.utils.book_append_sheet(wb, wsDetail, 'Fournisseurs');
+
+        // ── Feuille 3 : Conformes ─────────────────────────
+        const conformes = results.filter(r => (r.statut||'').includes('Conforme'));
+        if (conformes.length > 0) {
+          const conformeData = [headers];
+          conformes.forEach(r => {
+            conformeData.push([
+              r.nom_reel || aliasMap[r.alias] || r.alias,
+              r.alias,
+              r.statut || '',
+              r.siret_ok ? 'OUI' : 'NON',
+              r.tva_ok   ? 'OUI' : 'NON',
+              r.siren_coherent ? 'OUI' : 'NON',
+              (r.erreurs || []).join(' | '),
+              r.suggestion || '',
+            ]);
+          });
+          const wsConformes = XLSX.utils.aoa_to_sheet(conformeData);
+          wsConformes['!cols'] = wsDetail['!cols'];
+          XLSX.utils.book_append_sheet(wb, wsConformes, 'Conformes');
+        }
+
+        // ── Feuille 4 : À corriger + Bloquants ───────────
+        const nonConformes = results.filter(r => !(r.statut||'').includes('Conforme'));
+        if (nonConformes.length > 0) {
+          const nonConformeData = [headers];
+          nonConformes.forEach(r => {
+            nonConformeData.push([
+              r.nom_reel || aliasMap[r.alias] || r.alias,
+              r.alias,
+              r.statut || '',
+              r.siret_ok ? 'OUI' : 'NON',
+              r.tva_ok   ? 'OUI' : 'NON',
+              r.siren_coherent ? 'OUI' : 'NON',
+              (r.erreurs || []).join(' | '),
+              r.suggestion || '',
+            ]);
+          });
+          const wsNonConformes = XLSX.utils.aoa_to_sheet(nonConformeData);
+          wsNonConformes['!cols'] = wsDetail['!cols'];
+          XLSX.utils.book_append_sheet(wb, wsNonConformes, 'À corriger & Bloquants');
+        }
+
+        // Générer le buffer Excel
+        const xlsxBuffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename="rapport_${baseName}.xlsx"`);
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+        return res.send(xlsxBuffer);
+
+      } catch(xlsxErr) {
+        console.error('Erreur génération Excel:', xlsxErr.message);
+        // Fallback CSV si erreur
+        const csvContent = row.csv_content || 'Aucune donnée';
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="rapport_${baseName}.csv"`);
+        return res.send('\uFEFF' + csvContent);
+      }
     }
 
+    // ── Export rapport texte ──────────────────────────────
     if (decoded.type === 'pdf') {
-      // En production : générer un vrai PDF avec pdfkit
-      // Ici : envoi du contenu texte comme fallback
       const content = row.pdf_content || row.csv_content || 'Rapport non disponible';
       res.setHeader('Content-Type', 'text/plain; charset=utf-8');
       res.setHeader('Content-Disposition', `attachment; filename="rapport_${baseName}.txt"`);
