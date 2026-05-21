@@ -1,4 +1,4 @@
-// config/database.js — Connexion PostgreSQL (Supabase)
+// config/database.js — Connexion PostgreSQL
 const { Pool } = require('pg');
 
 const pool = new Pool({
@@ -21,19 +21,32 @@ async function testConnection() {
     await client.query('SELECT NOW()');
     client.release();
     console.log('[DB] Connexion PostgreSQL OK');
+
+    // ── Migrations automatiques ──────────────────────────
+    await runMigrations();
   } catch (err) {
     console.error('[DB] Échec connexion:', err.message);
     throw err;
   }
 }
 
-// Helper : exécuter une requête avec le tenant_id injecté dans la session
-// Cela active les politiques Row-Level Security de PostgreSQL
+async function runMigrations() {
+  try {
+    await pool.query(`
+      ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS reset_token TEXT,
+      ADD COLUMN IF NOT EXISTS reset_token_expires TIMESTAMPTZ;
+    `);
+    console.log('[DB] Migrations OK');
+  } catch (err) {
+    console.error('[DB] Erreur migration:', err.message);
+  }
+}
+
 async function queryWithTenant(tenantId, text, params = []) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    // Injection du tenant pour les politiques RLS
     await client.query(`SET LOCAL app.tenant_id = '${tenantId}'`);
     const result = await client.query(text, params);
     await client.query('COMMIT');
