@@ -35,7 +35,8 @@ async function runMigrations() {
     await pool.query(`
       ALTER TABLE users
       ADD COLUMN IF NOT EXISTS reset_token TEXT,
-      ADD COLUMN IF NOT EXISTS reset_token_expires TIMESTAMPTZ;
+      ADD COLUMN IF NOT EXISTS reset_token_expires TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS last_login TIMESTAMPTZ;
     `);
     console.log('[DB] Migrations OK');
   } catch (err) {
