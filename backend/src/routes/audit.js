@@ -16,7 +16,7 @@ router.use(authenticate);
 
 // ── Emails admin — bypass paiement ───────────────────────────────────────────
 const ADMIN_EMAILS = [
-  'deangelisalbert@gmail.com',
+  'deangelis.albert@gmail.com',
 ];
 
 // ── GET /api/audit/files — Liste des fichiers du tenant ──────────────────────
