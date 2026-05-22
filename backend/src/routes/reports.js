@@ -1,4 +1,4 @@
-// routes/reports.js — Téléchargement rapports avec liens temporaires
+// routes/reports.js
 const express  = require('express');
 const jwt      = require('jsonwebtoken');
 const XLSX     = require('xlsx');
@@ -35,7 +35,8 @@ function hexToRgb(hex) {
 
 function truncate(str, max) {
   if (!str) return '';
-  return str.length > max ? str.slice(0, max) + '…' : str;
+  str = String(str);
+  return str.length > max ? str.slice(0, max) + '...' : str;
 }
 
 async function generatePDF(summaryData, fileName, companyName) {
@@ -46,11 +47,13 @@ async function generatePDF(summaryData, fileName, companyName) {
   // Charger le logo
   let logoImage = null;
   try {
-    const logoPath = path.join(__dirname, '../logo.png');
-    const logoBytes = fs.readFileSync(logoPath);
-    logoImage = await pdfDoc.embedPng(logoBytes);
+    const logoPath = path.join(__dirname, '../assets/logo.png');
+    if (fs.existsSync(logoPath)) {
+      const logoBytes = fs.readFileSync(logoPath);
+      logoImage = await pdfDoc.embedPng(logoBytes);
+    }
   } catch(e) {
-    console.log('Logo non trouvé, on continue sans:', e.message);
+    console.log('Logo non charge:', e.message);
   }
 
   const results  = summaryData?.results  || [];
@@ -63,276 +66,222 @@ async function generatePDF(summaryData, fileName, companyName) {
   const bloquants = summary.bloquants  || results.filter(r=>(r.statut||'').includes('Bloquant')).length;
   const taux      = summary.taux       || (total > 0 ? Math.round(conformes/total*100) : 0);
 
-  // ══════════════════════════════════════════════════════
   // PAGE 1 — COUVERTURE
-  // ══════════════════════════════════════════════════════
   const page1 = pdfDoc.addPage([595, 842]);
-  const { width, height } = page1.getSize();
+  const W = 595, H = 842;
 
-  page1.drawRectangle({ x:0, y:0, width, height, color:C.dark });
-  page1.drawRectangle({ x:0, y:height-6, width, height:6, color:C.accent });
-  page1.drawRectangle({ x:0, y:0, width:4, height, color:C.accent });
+  page1.drawRectangle({ x:0, y:0, width:W, height:H, color:C.dark });
+  page1.drawRectangle({ x:0, y:H-6, width:W, height:6, color:C.accent });
+  page1.drawRectangle({ x:0, y:0, width:4, height:H, color:C.accent });
 
-  // Logo ou fallback texte
+  // Logo ou fallback
   if (logoImage) {
-    const logoDims = logoImage.scale(0.18);
-    page1.drawImage(logoImage, {
-      x: 40,
-      y: height - 50 - logoDims.height,
-      width: logoDims.width,
-      height: logoDims.height,
-    });
-    page1.drawText('DataRemédiation', {
-      x: 40 + logoDims.width + 14,
-      y: height - 62,
-      size: 24, font: helveticaBold, color: C.white
-    });
-    page1.drawText('Agent IA Conformité Fournisseurs', {
-      x: 40 + logoDims.width + 14,
-      y: height - 82,
-      size: 10, font: helvetica, color: C.muted
-    });
+    const logoDims = logoImage.scale(0.15);
+    page1.drawImage(logoImage, { x:40, y:H-55-logoDims.height, width:logoDims.width, height:logoDims.height });
+    const logoRight = 40 + logoDims.width + 12;
+    page1.drawText('DataRemediation', { x:logoRight, y:H-58, size:22, font:helveticaBold, color:C.white });
+    page1.drawText('Agent IA Conformite Fournisseurs', { x:logoRight, y:H-76, size:9, font:helvetica, color:C.muted });
   } else {
-    page1.drawCircle({ x:65, y:height-65, size:30, color:C.accent });
-    page1.drawText('DR', { x:52, y:height-72, size:18, font:helveticaBold, color:C.black });
-    page1.drawText('DataRemédiation', { x:110, y:height-60, size:24, font:helveticaBold, color:C.white });
-    page1.drawText('Agent IA Conformité Fournisseurs', { x:110, y:height-80, size:10, font:helvetica, color:C.muted });
+    page1.drawRectangle({ x:40, y:H-90, width:50, height:50, color:C.accent });
+    page1.drawText('DR', { x:52, y:H-72, size:20, font:helveticaBold, color:C.black });
+    page1.drawText('DataRemediation', { x:100, y:H-62, size:22, font:helveticaBold, color:C.white });
+    page1.drawText('Agent IA Conformite Fournisseurs', { x:100, y:H-80, size:9, font:helvetica, color:C.muted });
   }
 
-  page1.drawRectangle({ x:40, y:height-105, width:width-80, height:1, color:C.muted, opacity:0.3 });
+  page1.drawRectangle({ x:40, y:H-108, width:W-80, height:1, color:C.muted, opacity:0.3 });
 
-  // Titre rapport
-  page1.drawText('RAPPORT DE CONFORMITÉ', { x:40, y:height-155, size:30, font:helveticaBold, color:C.white });
-  page1.drawText('e-INVOICING 2026', { x:40, y:height-193, size:30, font:helveticaBold, color:C.accent });
+  page1.drawText('RAPPORT DE CONFORMITE', { x:40, y:H-150, size:28, font:helveticaBold, color:C.white });
+  page1.drawText('e-INVOICING 2026', { x:40, y:H-186, size:28, font:helveticaBold, color:C.accent });
 
-  page1.drawText(`Fichier : ${truncate(fileName, 55)}`, { x:40, y:height-235, size:10, font:helvetica, color:C.text });
-  page1.drawText(`Entreprise : ${truncate(companyName || 'N/A', 55)}`, { x:40, y:height-252, size:10, font:helvetica, color:C.text });
-  page1.drawText(`Date : ${new Date().toLocaleDateString('fr-FR', {day:'2-digit',month:'long',year:'numeric'})}`, { x:40, y:height-269, size:10, font:helvetica, color:C.text });
+  page1.drawText('Fichier : ' + truncate(fileName, 55), { x:40, y:H-228, size:10, font:helvetica, color:C.text });
+  page1.drawText('Entreprise : ' + truncate(companyName || 'N/A', 55), { x:40, y:H-245, size:10, font:helvetica, color:C.text });
+  page1.drawText('Date : ' + new Date().toLocaleDateString('fr-FR', {day:'2-digit',month:'long',year:'numeric'}), { x:40, y:H-262, size:10, font:helvetica, color:C.text });
 
-  // ── Score central ─────────────────────────────────────
-  const scoreY = height - 430;
-  page1.drawRectangle({ x:40, y:scoreY, width:width-80, height:130, color:C.surface });
-  page1.drawRectangle({ x:40, y:scoreY+128, width:width-80, height:3, color:C.accent });
-
-  page1.drawText('SCORE DE CONFORMITÉ GLOBAL', { x:60, y:scoreY+105, size:9, font:helveticaBold, color:C.muted });
+  // Score
+  const scoreY = H-420;
+  page1.drawRectangle({ x:40, y:scoreY, width:W-80, height:125, color:C.surface });
+  page1.drawRectangle({ x:40, y:scoreY+123, width:W-80, height:3, color:C.accent });
+  page1.drawText('SCORE DE CONFORMITE GLOBAL', { x:58, y:scoreY+100, size:9, font:helveticaBold, color:C.muted });
 
   const scoreColor = taux >= 80 ? C.accent : taux >= 50 ? C.warn : C.danger;
-  page1.drawText(`${taux}%`, { x:60, y:scoreY+48, size:52, font:helveticaBold, color:scoreColor });
+  page1.drawText(taux + '%', { x:58, y:scoreY+44, size:50, font:helveticaBold, color:scoreColor });
 
   const scoreLabel = taux >= 80 ? 'EXCELLENT' : taux >= 60 ? 'BON' : taux >= 40 ? 'MOYEN' : 'CRITIQUE';
-  page1.drawText(scoreLabel, { x:180, y:scoreY+72, size:13, font:helveticaBold, color:scoreColor });
-  page1.drawText(`sur ${total} fournisseurs analysés`, { x:180, y:scoreY+54, size:10, font:helvetica, color:C.text });
+  page1.drawText(scoreLabel, { x:175, y:scoreY+70, size:13, font:helveticaBold, color:scoreColor });
+  page1.drawText('sur ' + total + ' fournisseurs analyses', { x:175, y:scoreY+52, size:10, font:helvetica, color:C.text });
 
-  const barW = width - 220;
-  page1.drawRectangle({ x:180, y:scoreY+30, width:barW, height:8, color:C.card });
-  page1.drawRectangle({ x:180, y:scoreY+30, width:barW*(taux/100), height:8, color:scoreColor });
-  page1.drawText(`${taux}%`, { x:180+barW*(taux/100)+4, y:scoreY+30, size:7, font:helvetica, color:scoreColor });
+  const barW = W - 215;
+  page1.drawRectangle({ x:175, y:scoreY+28, width:barW, height:8, color:C.card });
+  if (taux > 0) page1.drawRectangle({ x:175, y:scoreY+28, width:Math.min(barW*(taux/100), barW), height:8, color:scoreColor });
 
-  // ── 4 KPIs ────────────────────────────────────────────
+  // KPIs
   const kpiY = scoreY - 105;
   const kpis = [
     { label:'Total',      value:total,     color:'#3d8eff' },
     { label:'Conformes',  value:conformes, color:'#00e5a0' },
-    { label:'À corriger', value:corriger,  color:'#ffb340' },
+    { label:'A corriger', value:corriger,  color:'#ffb340' },
     { label:'Bloquants',  value:bloquants, color:'#ff4566' },
   ];
-
-  const kpiW = (width - 120) / 4;
+  const kpiW = (W - 120) / 4;
   kpis.forEach((k, i) => {
     const kx = 40 + i * (kpiW + 13);
     const kColor = hexToRgb(k.color);
-    page1.drawRectangle({ x:kx, y:kpiY, width:kpiW, height:85, color:C.surface });
-    page1.drawRectangle({ x:kx, y:kpiY+83, width:kpiW, height:2, color:kColor });
-    page1.drawText(k.label.toUpperCase(), { x:kx+10, y:kpiY+65, size:8, font:helveticaBold, color:C.muted });
-    page1.drawText(String(k.value), { x:kx+10, y:kpiY+22, size:34, font:helveticaBold, color:kColor });
+    page1.drawRectangle({ x:kx, y:kpiY, width:kpiW, height:82, color:C.surface });
+    page1.drawRectangle({ x:kx, y:kpiY+80, width:kpiW, height:2, color:kColor });
+    page1.drawText(k.label.toUpperCase(), { x:kx+8, y:kpiY+62, size:7.5, font:helveticaBold, color:C.muted });
+    page1.drawText(String(k.value), { x:kx+8, y:kpiY+20, size:32, font:helveticaBold, color:kColor });
   });
 
-  // ── Graphique en barres ───────────────────────────────
-  const chartY = kpiY - 185;
-  page1.drawText('RÉPARTITION DES FOURNISSEURS', { x:40, y:chartY+155, size:9, font:helveticaBold, color:C.muted });
+  // Graphique barres
+  const chartY = kpiY - 180;
+  page1.drawText('REPARTITION DES FOURNISSEURS', { x:40, y:chartY+152, size:9, font:helveticaBold, color:C.muted });
 
   const bars = [
     { label:'Conformes',  value:conformes, color:C.accent },
-    { label:'À corriger', value:corriger,  color:C.warn   },
+    { label:'A corriger', value:corriger,  color:C.warn   },
     { label:'Bloquants',  value:bloquants, color:C.danger },
   ];
+  const maxVal = Math.max(conformes, corriger, bloquants, 1);
+  const bW = 65, bSp = 85, bH = 100, bX = 70;
 
-  const maxVal  = Math.max(conformes, corriger, bloquants, 1);
-  const chartH  = 100;
-  const barWidth = 65;
-  const barSpacing = 85;
-  const chartX  = 70;
-
-  // Axe Y
-  page1.drawRectangle({ x:chartX-15, y:chartY+18, width:1, height:chartH+5, color:C.muted, opacity:0.4 });
-
+  page1.drawRectangle({ x:bX-10, y:chartY+19, width:1, height:bH+5, color:C.muted, opacity:0.3 });
   bars.forEach((b, i) => {
-    const bx = chartX + i * (barWidth + barSpacing);
-    const bh = total > 0 ? (b.value / maxVal) * chartH : 0;
-    page1.drawRectangle({ x:bx, y:chartY+20, width:barWidth, height:Math.max(bh, 2), color:b.color, opacity:0.9 });
-    const valStr = String(b.value);
-    page1.drawText(valStr, { x:bx + barWidth/2 - (valStr.length*3.5), y:chartY+25+bh, size:11, font:helveticaBold, color:C.white });
-    page1.drawText(b.label, { x:bx + barWidth/2 - (b.label.length*2.5), y:chartY+6, size:7, font:helvetica, color:C.text });
+    const bx = bX + i*(bW+bSp);
+    const bh = Math.max((b.value/maxVal)*bH, 2);
+    page1.drawRectangle({ x:bx, y:chartY+20, width:bW, height:bh, color:b.color, opacity:0.9 });
+    page1.drawText(String(b.value), { x:bx+bW/2-8, y:chartY+24+bh, size:11, font:helveticaBold, color:C.white });
+    page1.drawText(b.label, { x:bx+bW/2-(b.label.length*2.3), y:chartY+6, size:7, font:helvetica, color:C.text });
   });
+  page1.drawRectangle({ x:bX-10, y:chartY+19, width:bW*3+bSp*2+20, height:1, color:C.muted, opacity:0.4 });
 
-  page1.drawRectangle({ x:chartX-15, y:chartY+19, width:barWidth*3+barSpacing*2+30, height:1, color:C.muted, opacity:0.5 });
+  // Pied page 1
+  page1.drawRectangle({ x:0, y:0, width:W, height:36, color:C.surface });
+  page1.drawText('Confidentiel - DataRemediation 2026 - Conformite e-Invoicing', { x:40, y:13, size:7.5, font:helvetica, color:C.muted });
+  page1.drawText('Page 1 / 3', { x:W-62, y:13, size:7.5, font:helvetica, color:C.muted });
 
-  // Pied de page
-  page1.drawRectangle({ x:0, y:0, width, height:38, color:C.surface });
-  page1.drawText('Confidentiel — DataRemédiation © 2026 — Conformité e-Invoicing', { x:40, y:14, size:8, font:helvetica, color:C.muted });
-  page1.drawText('Page 1 / 3', { x:width-65, y:14, size:8, font:helvetica, color:C.muted });
-
-  // ══════════════════════════════════════════════════════
-  // PAGE 2 — ANOMALIES & RECOMMANDATIONS
-  // ══════════════════════════════════════════════════════
+  // PAGE 2 — ANOMALIES
   const page2 = pdfDoc.addPage([595, 842]);
-  page2.drawRectangle({ x:0, y:0, width, height, color:C.dark });
-  page2.drawRectangle({ x:0, y:height-6, width, height:6, color:C.accent });
-  page2.drawRectangle({ x:0, y:0, width:4, height, color:C.accent });
+  page2.drawRectangle({ x:0, y:0, width:W, height:H, color:C.dark });
+  page2.drawRectangle({ x:0, y:H-6, width:W, height:6, color:C.accent });
+  page2.drawRectangle({ x:0, y:0, width:4, height:H, color:C.accent });
 
-  // Header
-  page2.drawText('DataRemédiation', { x:40, y:height-45, size:12, font:helveticaBold, color:C.accent });
-  page2.drawText('ANOMALIES DÉTECTÉES & RECOMMANDATIONS', { x:40, y:height-68, size:15, font:helveticaBold, color:C.white });
-  page2.drawRectangle({ x:40, y:height-82, width:width-80, height:1, color:C.muted, opacity:0.3 });
+  page2.drawText('DataRemediation', { x:40, y:H-44, size:11, font:helveticaBold, color:C.accent });
+  page2.drawText('ANOMALIES DETECTEES ET RECOMMANDATIONS', { x:40, y:H-66, size:14, font:helveticaBold, color:C.white });
+  page2.drawRectangle({ x:40, y:H-80, width:W-80, height:1, color:C.muted, opacity:0.3 });
 
-  let currentY = height - 108;
+  let curY = H-105;
 
-  const bloquantsList = results.filter(r => (r.statut||'').includes('Bloquant')).slice(0, 9);
-  const corrigerList  = results.filter(r => (r.statut||'').includes('corriger')).slice(0, 9);
+  const bloquantsList = results.filter(r => (r.statut||'').includes('Bloquant')).slice(0, 10);
+  const corrigerList  = results.filter(r => (r.statut||'').includes('corriger')).slice(0, 10);
 
   if (bloquantsList.length > 0) {
-    page2.drawRectangle({ x:40, y:currentY-18, width:width-80, height:22, color:hexToRgb('#ff456615'), opacity:0.3 });
-    page2.drawText(`✗ FOURNISSEURS BLOQUANTS (${bloquantsList.length})`, { x:45, y:currentY-10, size:10, font:helveticaBold, color:C.danger });
-    currentY -= 28;
+    page2.drawRectangle({ x:40, y:curY-20, width:W-80, height:24, color:C.surface });
+    page2.drawText('FOURNISSEURS BLOQUANTS (' + bloquantsList.length + ')', { x:46, y:curY-11, size:10, font:helveticaBold, color:C.danger });
+    curY -= 30;
 
-    bloquantsList.forEach((r) => {
-      if (currentY < 120) return;
+    bloquantsList.forEach(r => {
+      if (curY < 110) return;
       const nom = truncate(r.nom_reel || aliasMap[r.alias] || r.alias, 38);
-      const erreurs = truncate((r.erreurs||[]).join(' · '), 60);
-
-      page2.drawRectangle({ x:40, y:currentY-16, width:width-80, height:20, color:C.surface });
-      page2.drawRectangle({ x:40, y:currentY-16, width:3, height:20, color:C.danger });
-      page2.drawText(nom, { x:50, y:currentY-8, size:9, font:helveticaBold, color:C.white });
-      page2.drawText(erreurs, { x:50, y:currentY-20, size:7.5, font:helvetica, color:C.muted });
-
+      const err = truncate((r.erreurs||[]).join(' - '), 62);
+      page2.drawRectangle({ x:40, y:curY-15, width:W-80, height:19, color:C.card });
+      page2.drawRectangle({ x:40, y:curY-15, width:3, height:19, color:C.danger });
+      page2.drawText(nom, { x:50, y:curY-7, size:8.5, font:helveticaBold, color:C.white });
+      page2.drawText(err, { x:50, y:curY-19, size:7.5, font:helvetica, color:C.muted });
       if (r.suggestion) {
-        page2.drawText(`→ ${truncate(r.suggestion, 75)}`, { x:50, y:currentY-32, size:7.5, font:helvetica, color:C.accent });
-        currentY -= 44;
-      } else {
-        currentY -= 28;
-      }
+        page2.drawText('-> ' + truncate(r.suggestion, 78), { x:50, y:curY-30, size:7.5, font:helvetica, color:C.accent });
+        curY -= 42;
+      } else { curY -= 27; }
     });
   }
 
-  currentY -= 16;
+  curY -= 15;
 
-  if (corrigerList.length > 0 && currentY > 160) {
-    page2.drawRectangle({ x:40, y:currentY-18, width:width-80, height:22, color:hexToRgb('#ffb34015'), opacity:0.3 });
-    page2.drawText(`⚠ FOURNISSEURS À CORRIGER (${corrigerList.length})`, { x:45, y:currentY-10, size:10, font:helveticaBold, color:C.warn });
-    currentY -= 28;
+  if (corrigerList.length > 0 && curY > 150) {
+    page2.drawRectangle({ x:40, y:curY-20, width:W-80, height:24, color:C.surface });
+    page2.drawText('FOURNISSEURS A CORRIGER (' + corrigerList.length + ')', { x:46, y:curY-11, size:10, font:helveticaBold, color:C.warn });
+    curY -= 30;
 
-    corrigerList.forEach((r) => {
-      if (currentY < 120) return;
+    corrigerList.forEach(r => {
+      if (curY < 110) return;
       const nom = truncate(r.nom_reel || aliasMap[r.alias] || r.alias, 38);
-      const erreurs = truncate((r.erreurs||[]).join(' · '), 60);
-
-      page2.drawRectangle({ x:40, y:currentY-16, width:width-80, height:20, color:C.surface });
-      page2.drawRectangle({ x:40, y:currentY-16, width:3, height:20, color:C.warn });
-      page2.drawText(nom, { x:50, y:currentY-8, size:9, font:helveticaBold, color:C.white });
-      page2.drawText(erreurs, { x:50, y:currentY-20, size:7.5, font:helvetica, color:C.muted });
-
+      const err = truncate((r.erreurs||[]).join(' - '), 62);
+      page2.drawRectangle({ x:40, y:curY-15, width:W-80, height:19, color:C.card });
+      page2.drawRectangle({ x:40, y:curY-15, width:3, height:19, color:C.warn });
+      page2.drawText(nom, { x:50, y:curY-7, size:8.5, font:helveticaBold, color:C.white });
+      page2.drawText(err, { x:50, y:curY-19, size:7.5, font:helvetica, color:C.muted });
       if (r.suggestion) {
-        page2.drawText(`→ ${truncate(r.suggestion, 75)}`, { x:50, y:currentY-32, size:7.5, font:helvetica, color:C.accent });
-        currentY -= 44;
-      } else {
-        currentY -= 28;
-      }
+        page2.drawText('-> ' + truncate(r.suggestion, 78), { x:50, y:curY-30, size:7.5, font:helvetica, color:C.accent });
+        curY -= 42;
+      } else { curY -= 27; }
     });
   }
 
-  // Recommandations générales
-  if (currentY > 170) {
-    currentY -= 16;
-    const recH = 115;
-    page2.drawRectangle({ x:40, y:currentY-recH, width:width-80, height:recH, color:C.surface });
-    page2.drawRectangle({ x:40, y:currentY-recH+recH-2, width:width-80, height:3, color:C.blue });
-
-    page2.drawText('RECOMMANDATIONS GÉNÉRALES — e-INVOICING 2026', { x:50, y:currentY-16, size:9, font:helveticaBold, color:C.blue });
-
+  if (curY > 160) {
+    curY -= 15;
+    page2.drawRectangle({ x:40, y:curY-110, width:W-80, height:118, color:C.surface });
+    page2.drawRectangle({ x:40, y:curY+6, width:W-80, height:3, color:C.blue });
+    page2.drawText('RECOMMANDATIONS GENERALES - e-INVOICING 2026', { x:50, y:curY-14, size:9, font:helveticaBold, color:C.blue });
     const recs = [
-      '1.  Compléter tous les SIREN (9 chiffres) en SIRET (14 chiffres) avant le 01/09/2026',
-      '2.  Valider les numéros de TVA intracommunautaire pour tous les fournisseurs européens',
-      '3.  Éliminer les doublons fournisseurs pour éviter les rejets de factures électroniques',
-      '4.  Mettre à jour les données fournisseurs dans votre ERP / outil comptable',
-      '5.  Planifier un audit de conformité tous les 6 mois pour maintenir le niveau de qualité',
+      '1. Completer tous les SIREN (9 chiffres) en SIRET (14 chiffres) avant le 01/09/2026',
+      '2. Valider les numeros de TVA intracommunautaire pour tous les fournisseurs europeens',
+      '3. Eliminer les doublons fournisseurs pour eviter les rejets de factures electroniques',
+      '4. Mettre a jour les donnees fournisseurs dans votre ERP ou outil comptable',
+      '5. Planifier un audit de conformite tous les 6 mois',
     ];
-
     recs.forEach((rec, i) => {
-      page2.drawText(rec, { x:50, y:currentY-34-(i*15), size:8, font:helvetica, color:C.text });
+      page2.drawText(rec, { x:50, y:curY-32-(i*14), size:8, font:helvetica, color:C.text });
     });
   }
 
-  page2.drawRectangle({ x:0, y:0, width, height:38, color:C.surface });
-  page2.drawText('Confidentiel — DataRemédiation © 2026 — Conformité e-Invoicing', { x:40, y:14, size:8, font:helvetica, color:C.muted });
-  page2.drawText('Page 2 / 3', { x:width-65, y:14, size:8, font:helvetica, color:C.muted });
+  page2.drawRectangle({ x:0, y:0, width:W, height:36, color:C.surface });
+  page2.drawText('Confidentiel - DataRemediation 2026 - Conformite e-Invoicing', { x:40, y:13, size:7.5, font:helvetica, color:C.muted });
+  page2.drawText('Page 2 / 3', { x:W-62, y:13, size:7.5, font:helvetica, color:C.muted });
 
-  // ══════════════════════════════════════════════════════
-  // PAGE 3 — LISTE COMPLÈTE FOURNISSEURS
-  // ══════════════════════════════════════════════════════
+  // PAGE 3 — LISTE COMPLETE
   const page3 = pdfDoc.addPage([595, 842]);
-  page3.drawRectangle({ x:0, y:0, width, height, color:C.dark });
-  page3.drawRectangle({ x:0, y:height-6, width, height:6, color:C.accent });
-  page3.drawRectangle({ x:0, y:0, width:4, height, color:C.accent });
+  page3.drawRectangle({ x:0, y:0, width:W, height:H, color:C.dark });
+  page3.drawRectangle({ x:0, y:H-6, width:W, height:6, color:C.accent });
+  page3.drawRectangle({ x:0, y:0, width:4, height:H, color:C.accent });
 
-  page3.drawText('DataRemédiation', { x:40, y:height-45, size:12, font:helveticaBold, color:C.accent });
-  page3.drawText(`LISTE COMPLÈTE — ${total} FOURNISSEURS`, { x:40, y:height-68, size:15, font:helveticaBold, color:C.white });
-  page3.drawRectangle({ x:40, y:height-82, width:width-80, height:1, color:C.muted, opacity:0.3 });
+  page3.drawText('DataRemediation', { x:40, y:H-44, size:11, font:helveticaBold, color:C.accent });
+  page3.drawText('LISTE COMPLETE - ' + total + ' FOURNISSEURS', { x:40, y:H-66, size:14, font:helveticaBold, color:C.white });
+  page3.drawRectangle({ x:40, y:H-80, width:W-80, height:1, color:C.muted, opacity:0.3 });
 
-  // En-tête tableau
-  const colY = height - 100;
-  page3.drawRectangle({ x:40, y:colY-14, width:width-80, height:18, color:C.surface });
-  page3.drawRectangle({ x:40, y:colY+2, width:width-80, height:2, color:C.accent });
-
+  const colY = H-100;
+  page3.drawRectangle({ x:40, y:colY-14, width:W-80, height:18, color:C.surface });
+  page3.drawRectangle({ x:40, y:colY+2, width:W-80, height:2, color:C.accent });
   page3.drawText('Fournisseur',    { x:46,  y:colY-8, size:7.5, font:helveticaBold, color:C.muted });
-  page3.drawText('Statut',         { x:248, y:colY-8, size:7.5, font:helveticaBold, color:C.muted });
-  page3.drawText('SIRET',          { x:318, y:colY-8, size:7.5, font:helveticaBold, color:C.muted });
+  page3.drawText('Statut',         { x:250, y:colY-8, size:7.5, font:helveticaBold, color:C.muted });
+  page3.drawText('SIRET',          { x:320, y:colY-8, size:7.5, font:helveticaBold, color:C.muted });
   page3.drawText('TVA',            { x:368, y:colY-8, size:7.5, font:helveticaBold, color:C.muted });
   page3.drawText('Recommandation', { x:400, y:colY-8, size:7.5, font:helveticaBold, color:C.muted });
 
   let rowY = colY - 24;
-  const maxRows = 38;
-
-  results.slice(0, maxRows).forEach((r, i) => {
+  results.slice(0, 38).forEach((r, i) => {
     if (rowY < 50) return;
     const isConf  = (r.statut||'').includes('Conforme');
     const isBlock = (r.statut||'').includes('Bloquant');
-    const rowBg   = i % 2 === 0 ? C.surface : C.card;
-    const statusColor = isConf ? C.accent : isBlock ? C.danger : C.warn;
-    const statut = isConf ? 'Conforme' : isBlock ? 'Bloquant' : 'Corriger';
-    const nom = truncate(r.nom_reel || aliasMap[r.alias] || r.alias, 30);
-    const suggestion = truncate(r.suggestion || '', 22);
-
-    page3.drawRectangle({ x:40, y:rowY-13, width:width-80, height:17, color:rowBg });
-    page3.drawRectangle({ x:40, y:rowY-13, width:2, height:17, color:statusColor });
-
-    page3.drawText(nom,        { x:46,  y:rowY-7, size:7, font:helvetica,     color:C.text });
-    page3.drawText(statut,     { x:248, y:rowY-7, size:7, font:helveticaBold, color:statusColor });
-    page3.drawText(r.siret_ok?'✓':'✗', { x:332, y:rowY-7, size:8, font:helveticaBold, color:r.siret_ok?C.accent:C.danger });
-    page3.drawText(r.tva_ok?'✓':'✗',   { x:378, y:rowY-7, size:8, font:helveticaBold, color:r.tva_ok?C.accent:C.danger });
-    page3.drawText(suggestion, { x:400, y:rowY-7, size:6, font:helvetica,     color:C.muted });
-
+    const sColor  = isConf ? C.accent : isBlock ? C.danger : C.warn;
+    const statut  = isConf ? 'Conforme' : isBlock ? 'Bloquant' : 'Corriger';
+    page3.drawRectangle({ x:40, y:rowY-13, width:W-80, height:17, color: i%2===0 ? C.surface : C.card });
+    page3.drawRectangle({ x:40, y:rowY-13, width:2, height:17, color:sColor });
+    page3.drawText(truncate(r.nom_reel || aliasMap[r.alias] || r.alias, 30), { x:46, y:rowY-7, size:7, font:helvetica, color:C.text });
+    page3.drawText(statut, { x:250, y:rowY-7, size:7, font:helveticaBold, color:sColor });
+    page3.drawText(r.siret_ok?'OUI':'NON', { x:320, y:rowY-7, size:7, font:helveticaBold, color:r.siret_ok?C.accent:C.danger });
+    page3.drawText(r.tva_ok?'OUI':'NON',   { x:368, y:rowY-7, size:7, font:helveticaBold, color:r.tva_ok?C.accent:C.danger });
+    page3.drawText(truncate(r.suggestion||'', 22), { x:400, y:rowY-7, size:6, font:helvetica, color:C.muted });
     rowY -= 18;
   });
 
-  if (results.length > maxRows) {
-    page3.drawText(`... et ${results.length - maxRows} autres fournisseurs — voir fichier Excel pour la liste complète`, {
+  if (results.length > 38) {
+    page3.drawText('... et ' + (results.length-38) + ' autres fournisseurs - voir fichier Excel pour la liste complete', {
       x:40, y:rowY+2, size:8, font:helvetica, color:C.muted
     });
   }
 
-  page3.drawRectangle({ x:0, y:0, width, height:38, color:C.surface });
-  page3.drawText('Confidentiel — DataRemédiation © 2026 — Conformité e-Invoicing', { x:40, y:14, size:8, font:helvetica, color:C.muted });
-  page3.drawText('Page 3 / 3', { x:width-65, y:14, size:8, font:helvetica, color:C.muted });
+  page3.drawRectangle({ x:0, y:0, width:W, height:36, color:C.surface });
+  page3.drawText('Confidentiel - DataRemediation 2026 - Conformite e-Invoicing', { x:40, y:13, size:7.5, font:helvetica, color:C.muted });
+  page3.drawText('Page 3 / 3', { x:W-62, y:13, size:7.5, font:helvetica, color:C.muted });
 
   return Buffer.from(await pdfDoc.save());
 }
@@ -359,7 +308,7 @@ router.post('/:fileId/link',
       );
 
       if (result.rows.length === 0) {
-        return res.status(404).json({ error: 'Rapport introuvable ou analyse non terminée' });
+        return res.status(404).json({ error: 'Rapport introuvable ou analyse non terminee' });
       }
 
       const downloadToken = jwt.sign(
@@ -388,19 +337,18 @@ router.get('/download/:token', async (req, res, next) => {
     try {
       decoded = jwt.verify(token, process.env.JWT_SECRET);
     } catch {
-      return res.status(401).json({ error: 'Lien de téléchargement invalide ou expiré' });
+      return res.status(401).json({ error: 'Lien invalide ou expire' });
     }
 
     if (decoded.purpose !== 'download') {
       return res.status(401).json({ error: 'Token invalide' });
     }
 
+    // Requête simplifiée sans JOIN complexe
     const result = await pool.query(
-      `SELECT af.original_name, af.tenant_id, ar.csv_content, ar.pdf_content, ar.summary,
-              u.company
+      `SELECT af.original_name, af.tenant_id, ar.csv_content, ar.pdf_content, ar.summary
        FROM audit_files af
        LEFT JOIN audit_reports ar ON ar.file_id = af.id
-       LEFT JOIN users u ON u.tenant_id = af.tenant_id
        WHERE af.id = $1 AND af.tenant_id = $2
        LIMIT 1`,
       [decoded.fileId, decoded.tenantId]
@@ -413,6 +361,18 @@ router.get('/download/:token', async (req, res, next) => {
     const row = result.rows[0];
     const baseName = row.original_name.replace(/\.[^.]+$/, '');
 
+    // Récupérer le nom de l'entreprise séparément
+    let companyName = 'N/A';
+    try {
+      const companyResult = await pool.query(
+        'SELECT company FROM users WHERE tenant_id = $1 LIMIT 1',
+        [decoded.tenantId]
+      );
+      if (companyResult.rows.length > 0) companyName = companyResult.rows[0].company;
+    } catch(e) {
+      console.log('Company non trouvee:', e.message);
+    }
+
     // ── Export Excel ──────────────────────────────────────
     if (decoded.type === 'csv') {
       try {
@@ -424,25 +384,25 @@ router.get('/download/:token', async (req, res, next) => {
         const wb = XLSX.utils.book_new();
 
         const resumeData = [
-          ['RAPPORT DE CONFORMITÉ e-INVOICING 2026'],
-          ['DataRemédiation — Confidentiel'],
+          ['RAPPORT DE CONFORMITE e-INVOICING 2026'],
+          ['DataRemediation - Confidentiel'],
           [],
-          ['Fichier analysé', row.original_name],
-          ['Date de génération', new Date().toLocaleDateString('fr-FR')],
+          ['Fichier analyse', row.original_name],
+          ['Date de generation', new Date().toLocaleDateString('fr-FR')],
           [],
-          ['RÉSUMÉ'],
+          ['RESUME'],
           ['Total fournisseurs', summary.total || results.length],
           ['Conformes',          summary.conformes  || 0],
-          ['À corriger',         summary.a_corriger || 0],
+          ['A corriger',         summary.a_corriger || 0],
           ['Bloquants',          summary.bloquants  || 0],
-          ['Taux de conformité', `${summary.taux || 0}%`],
+          ['Taux de conformite', (summary.taux || 0) + '%'],
         ];
 
         const wsResume = XLSX.utils.aoa_to_sheet(resumeData);
         wsResume['!cols'] = [{ wch: 30 }, { wch: 50 }];
-        XLSX.utils.book_append_sheet(wb, wsResume, 'Résumé');
+        XLSX.utils.book_append_sheet(wb, wsResume, 'Resume');
 
-        const headers = ['Nom fournisseur','Alias','Statut','SIRET/SIREN valide','TVA valide','Cohérence SIREN','Erreurs','Recommandation e-Invoicing 2026'];
+        const headers = ['Nom fournisseur','Alias','Statut','SIRET valide','TVA valide','SIREN coherent','Erreurs','Recommandation'];
         const detailData = [headers];
         results.forEach(r => {
           detailData.push([
@@ -457,7 +417,7 @@ router.get('/download/:token', async (req, res, next) => {
         });
 
         const wsDetail = XLSX.utils.aoa_to_sheet(detailData);
-        wsDetail['!cols'] = [{ wch:35 },{ wch:12 },{ wch:15 },{ wch:18 },{ wch:12 },{ wch:18 },{ wch:40 },{ wch:60 }];
+        wsDetail['!cols'] = [{ wch:35 },{ wch:12 },{ wch:15 },{ wch:14 },{ wch:12 },{ wch:16 },{ wch:40 },{ wch:60 }];
         XLSX.utils.book_append_sheet(wb, wsDetail, 'Fournisseurs');
 
         const conformes = results.filter(r => (r.statut||'').includes('Conforme'));
@@ -473,7 +433,7 @@ router.get('/download/:token', async (req, res, next) => {
           const nd = [headers, ...nonConformes.map(r => [r.nom_reel||aliasMap[r.alias]||r.alias,r.alias,r.statut||'',r.siret_ok?'OUI':'NON',r.tva_ok?'OUI':'NON',r.siren_coherent?'OUI':'NON',(r.erreurs||[]).join(' | '),r.suggestion||''])];
           const ws = XLSX.utils.aoa_to_sheet(nd);
           ws['!cols'] = wsDetail['!cols'];
-          XLSX.utils.book_append_sheet(wb, ws, 'À corriger & Bloquants');
+          XLSX.utils.book_append_sheet(wb, ws, 'A corriger et Bloquants');
         }
 
         const xlsxBuffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
@@ -483,11 +443,8 @@ router.get('/download/:token', async (req, res, next) => {
         return res.send(xlsxBuffer);
 
       } catch(xlsxErr) {
-        console.error('Erreur génération Excel:', xlsxErr.message);
-        const csvContent = row.csv_content || 'Aucune donnée';
-        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-        res.setHeader('Content-Disposition', `attachment; filename="rapport_${baseName}.csv"`);
-        return res.send('\uFEFF' + csvContent);
+        console.error('Erreur Excel:', xlsxErr.message);
+        return res.status(500).json({ error: 'Erreur generation Excel: ' + xlsxErr.message });
       }
     }
 
@@ -495,22 +452,22 @@ router.get('/download/:token', async (req, res, next) => {
     if (decoded.type === 'pdf') {
       try {
         const summaryData = typeof row.summary === 'string' ? JSON.parse(row.summary) : row.summary;
-        const pdfBuffer = await generatePDF(summaryData, row.original_name, row.company);
+        const pdfBuffer = await generatePDF(summaryData, row.original_name, companyName);
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `attachment; filename="rapport_conformite_${baseName}.pdf"`);
         res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
         return res.send(pdfBuffer);
       } catch(pdfErr) {
-        console.error('Erreur génération PDF:', pdfErr.message);
-        const content = row.pdf_content || row.csv_content || 'Rapport non disponible';
-        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-        res.setHeader('Content-Disposition', `attachment; filename="rapport_${baseName}.txt"`);
-        return res.send(content);
+        console.error('Erreur PDF:', pdfErr.message, pdfErr.stack);
+        return res.status(500).json({ error: 'Erreur generation PDF: ' + pdfErr.message });
       }
     }
 
     res.status(400).json({ error: 'Type inconnu' });
-  } catch (err) { next(err); }
+  } catch (err) {
+    console.error('Erreur download:', err.message, err.stack);
+    next(err);
+  }
 });
 
 module.exports = router;
