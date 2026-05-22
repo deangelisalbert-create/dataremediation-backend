@@ -30,6 +30,7 @@ async function testConnection() {
 
 async function runMigrations() {
   try {
+    // ── Users : colonnes auth ────────────────────────────
     await pool.query(`
       ALTER TABLE users
       ADD COLUMN IF NOT EXISTS reset_token TEXT,
@@ -37,16 +38,31 @@ async function runMigrations() {
       ADD COLUMN IF NOT EXISTS last_login TIMESTAMPTZ,
       ADD COLUMN IF NOT EXISTS plan TEXT DEFAULT 'basic';
     `);
+
+    // ── Users : colonnes crédits et abonnement ───────────
+    await pool.query(`
+      ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS credits INTEGER DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS abonnement TEXT DEFAULT NULL,
+      ADD COLUMN IF NOT EXISTS abonnement_quota INTEGER DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS abonnement_fournisseurs_restants INTEGER DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS abonnement_reset_date DATE DEFAULT NULL;
+    `);
+
+    // ── Refresh tokens ───────────────────────────────────
     await pool.query(`
       ALTER TABLE refresh_tokens
       ADD COLUMN IF NOT EXISTS token TEXT,
       ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ,
       ADD COLUMN IF NOT EXISTS user_id UUID;
     `);
+
+    // ── Audit files : colonne paid ───────────────────────
     await pool.query(`
-      ALTER TABLE audit_jobs
+      ALTER TABLE audit_files
       ADD COLUMN IF NOT EXISTS paid BOOLEAN DEFAULT false;
     `);
+
     console.log('[DB] Migrations OK');
   } catch (err) {
     console.error('[DB] Erreur migration:', err.message);
