@@ -8,7 +8,10 @@
     "dev": "nodemon src/index.js",
     "migrate": "node src/utils/migrate.js"
   },
-  "dependencies": {
+ "dependencies": {
+  "stripe": "^14.0.0",
+  ...
+}
     "@anthropic-ai/sdk": "^0.24.0",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
