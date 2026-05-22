@@ -45,7 +45,7 @@ app.use(cors({
   },
   credentials: true,
   methods: ['GET', 'POST', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Tenant-ID']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Tenant-ID', 'X-Nb-Fournisseurs']
 }));
 
 // ── ⚠️ WEBHOOK STRIPE — DOIT ÊTRE AVANT express.json() ──
