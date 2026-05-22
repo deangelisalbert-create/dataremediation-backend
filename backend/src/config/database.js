@@ -21,8 +21,6 @@ async function testConnection() {
     await client.query('SELECT NOW()');
     client.release();
     console.log('[DB] Connexion PostgreSQL OK');
-
-    // ── Migrations automatiques ──────────────────────────
     await runMigrations();
   } catch (err) {
     console.error('[DB] Échec connexion:', err.message);
@@ -31,12 +29,6 @@ async function testConnection() {
 }
 
 async function runMigrations() {
-  try {
-    await pool.query(`
-  ALTER TABLE users
-  ADD COLUMN IF NOT EXISTS reset_token TEXT,
-  ADD COLUMN IF NOT EXISTS reset_token_expires TIMESTAMPTZ,
-  ADD COLUMN IF NOT EXISTS last_login TIMESTAMPTZ;async function runMigrations() {
   try {
     await pool.query(`
       ALTER TABLE users
@@ -51,18 +43,10 @@ async function runMigrations() {
       ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ,
       ADD COLUMN IF NOT EXISTS user_id UUID;
     `);
-    console.log('[DB] Migrations OK');
-  } catch (err) {
-    console.error('[DB] Erreur migration:', err.message);
-  }
-}
-`);
-await pool.query(`
-  ALTER TABLE refresh_tokens
-  ADD COLUMN IF NOT EXISTS token TEXT,
-  ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ,
-  ADD COLUMN IF NOT EXISTS user_id UUID;
-`);
+    await pool.query(`
+      ALTER TABLE audit_jobs
+      ADD COLUMN IF NOT EXISTS paid BOOLEAN DEFAULT false;
+    `);
     console.log('[DB] Migrations OK');
   } catch (err) {
     console.error('[DB] Erreur migration:', err.message);
