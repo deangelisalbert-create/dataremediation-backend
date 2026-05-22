@@ -11,14 +11,16 @@ const cron       = require('node-cron');
 const path       = require('path');
 const fs         = require('fs');
 
-const authRoutes   = require('./routes/auth');
-const auditRoutes  = require('./routes/audit');
-const reportRoutes = require('./routes/reports');
+const authRoutes    = require('./routes/auth');
+const auditRoutes   = require('./routes/audit');
+const reportRoutes  = require('./routes/reports');
+const webhookRoutes = require('./routes/webhook');
 const { errorHandler } = require('./middleware/errorHandler');
 const { cleanupExpiredFiles } = require('./services/cleanup');
 const { testConnection } = require('./config/database');
 
-const app  = express();app.set('trust proxy', 1);
+const app  = express();
+app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3001;
 
 // ── Dossier uploads ──────────────────────────────────────
@@ -46,6 +48,10 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Tenant-ID']
 }));
 
+// ── ⚠️ WEBHOOK STRIPE — DOIT ÊTRE AVANT express.json() ──
+// Stripe envoie un body brut (Buffer), pas du JSON
+app.use('/webhook', express.raw({ type: 'application/json' }), webhookRoutes);
+
 // ── Body parsers ─────────────────────────────────────────
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: false }));
@@ -63,7 +69,7 @@ app.use('/api/', limiter);
 // ── Rate limiting renforcé sur auth ──────────────────────
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100,  // ← était 10
+  max: 100,
   message: { error: 'Trop de tentatives de connexion.' }
 });
 app.use('/api/auth/', authLimiter);
@@ -87,7 +93,6 @@ app.use((req, res) => {
 app.use(errorHandler);
 
 // ── CRON : nettoyage fichiers expirés ────────────────────
-// Tourne toutes les 15 minutes
 cron.schedule('*/15 * * * *', async () => {
   try {
     const deleted = await cleanupExpiredFiles();
