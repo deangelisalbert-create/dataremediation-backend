@@ -47,7 +47,7 @@ async function generatePDF(summaryData, fileName, companyName) {
   // Charger le logo
   let logoImage = null;
   try {
-    const logoPath = path.join(__dirname, '../assets/logo.png');
+    const logoPath = path.join(__dirname, '../logo.png');
     if (fs.existsSync(logoPath)) {
       const logoBytes = fs.readFileSync(logoPath);
       logoImage = await pdfDoc.embedPng(logoBytes);
