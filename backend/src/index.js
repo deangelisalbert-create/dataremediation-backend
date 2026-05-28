@@ -11,13 +11,14 @@ const cron       = require('node-cron');
 const path       = require('path');
 const fs         = require('fs');
 
-const authRoutes    = require('./routes/auth');
-const auditRoutes   = require('./routes/audit');
-const reportRoutes  = require('./routes/reports');
-const webhookRoutes = require('./routes/webhook');
-const { errorHandler } = require('./middleware/errorHandler');
+const authRoutes           = require('./routes/auth');
+const auditRoutes          = require('./routes/audit');
+const reportRoutes         = require('./routes/reports');
+const webhookRoutes        = require('./routes/webhook');
+const rectificationRoutes  = require('./routes/rectification');
+const { errorHandler }     = require('./middleware/errorHandler');
 const { cleanupExpiredFiles } = require('./services/cleanup');
-const { testConnection } = require('./config/database');
+const { testConnection }   = require('./config/database');
 
 const app  = express();
 app.set('trust proxy', 1);
@@ -37,6 +38,7 @@ app.use(cors({
   origin: function(origin, callback) {
     if (!origin || 
         origin.includes('vercel.app') || 
+        origin.includes('dataremediation.fr') ||
         origin.includes('localhost')) {
       callback(null, true);
     } else {
@@ -49,7 +51,6 @@ app.use(cors({
 }));
 
 // ── ⚠️ WEBHOOK STRIPE — DOIT ÊTRE AVANT express.json() ──
-// Stripe envoie un body brut (Buffer), pas du JSON
 app.use('/webhook', express.raw({ type: 'application/json' }), webhookRoutes);
 
 // ── Body parsers ─────────────────────────────────────────
@@ -75,9 +76,10 @@ const authLimiter = rateLimit({
 app.use('/api/auth/', authLimiter);
 
 // ── Routes ───────────────────────────────────────────────
-app.use('/api/auth',    authRoutes);
-app.use('/api/audit',   auditRoutes);
-app.use('/api/reports', reportRoutes);
+app.use('/api/auth',          authRoutes);
+app.use('/api/audit',         auditRoutes);
+app.use('/api/reports',       reportRoutes);
+app.use('/api/rectification', rectificationRoutes);
 
 // ── Health check ─────────────────────────────────────────
 app.get('/health', (req, res) => {
