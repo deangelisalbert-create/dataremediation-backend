@@ -108,6 +108,6 @@ function computeScore(stats) {
   const score = Math.round((lignesOk / stats.total) * 100);
   return {
     valeur: score,
-    mention: score >= 90 ? 'Excellent' :
-             score >= 70 ? 'Bon' :
-             score >= 50 ? 'Moyen' : 'Insuf
+   mention: score >= 90 ? 'Excellent' :
+         score >= 70 ? 'Bon' :
+         score >= 50 ? 'Moyen' : 'Insuffisant',
