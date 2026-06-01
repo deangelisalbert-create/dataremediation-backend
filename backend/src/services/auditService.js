@@ -1,487 +1,344 @@
-// services/reportGenerator.js — Rapport structuré complet DataRemédiation
-// Remplace buildTextReport() dans auditService.js
-// Produit un objet JSON riche couvrant les 8 sections du modèle
+// services/auditService.js — Cœur métier : pseudo + IA + rapport
+const fs         = require('fs');
+const path       = require('path');
+const Anthropic  = require('@anthropic-ai/sdk');
+const { queryWithTenant, pool } = require('../config/database');
+const { safeLog } = require('../middleware/errorHandler');
+const XLSX       = require('xlsx');
+const { generateFullReport } = require('./reportGenerator');
 
-'use strict';
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-// ─────────────────────────────────────────────────────────────
-// 1. SCORE EXÉCUTIF
-// ─────────────────────────────────────────────────────────────
-function buildScoreExecutif(summary, results) {
-  const { total, conformes, a_corriger, bloquants, taux } = summary;
+const SYSTEM_PROMPT = `Tu es un Expert Conformité e-Invoicing France 2026.
+Tu reçois des données fournisseurs PSEUDONYMISÉES (alias FOURN_XXX — jamais de vrais noms).
 
-  const doublons        = detectDoublons(results);
-  const siretInvalides  = results.filter(r => !r.siret_ok).length;
-  const tvaIncoherentes = results.filter(r => !r.tva_ok).length;
-  const champsCritiques = results.filter(r =>
-    r.erreurs?.some(e => e.toLowerCase().includes('manquant') || e.toLowerCase().includes('absent'))
-  ).length;
+RÈGLES DE VALIDATION :
+- SIREN/SIRET : accepter 9 chiffres numériques (SIREN) OU 14 chiffres numériques (SIRET complet)
+- TVA FR : format "FR" + 2 caractères alphanumériques + 9 chiffres. Ex: FR83352600820
+- Cohérence SIREN : le SIREN (9 chiffres) doit correspondre aux 9 derniers chiffres de la TVA
+- Doublon : même SIREN sous deux alias différents
+- Si siret/siren contient du texte non numérique (ex: "TRANSPORT", "HOTEL") → invalide
 
-  let niveauRisque;
-  if (taux >= 92)      niveauRisque = 'Faible';
-  else if (taux >= 75) niveauRisque = 'Modéré';
-  else if (taux >= 50) niveauRisque = 'Élevé';
-  else                 niveauRisque = 'Critique';
+STATUTS :
+- "Conforme" : SIREN ou SIRET valide (9 ou 14 chiffres) ET TVA valide ET cohérence OK
+- "A corriger" : SIREN valide (9 chiffres) mais SIRET incomplet OU TVA manquante/incorrecte
+- "Bloquant" : données absentes ou texte non numérique
 
-  return {
-    score_global: taux,
-    niveau_risque: niveauRisque,
-    interpretation: getInterpretation(taux),
-    resume: {
-      fournisseurs_analyses:  total,
-      fournisseurs_conformes: conformes,
-      anomalies_detectees:    a_corriger + bloquants,
-      doublons:               doublons.length,
-      siret_invalides:        siretInvalides,
-      tva_incoherentes:       tvaIncoherentes,
-      fournisseurs_bloquants: bloquants,
-      champs_critiques_manquants: champsCritiques,
-    },
-  };
+RECOMMANDATIONS OBLIGATOIRES :
+- Si statut "Conforme" avec SIREN 9 chiffres : suggestion = "Conforme 2024. Pour e-Invoicing 2026 : compléter en SIRET 14 chiffres (ajouter le code NIC 5 chiffres)"
+- Si statut "Conforme" avec SIRET 14 chiffres : suggestion = "Conforme e-Invoicing 2026"
+- Si statut "A corriger" : expliquer ce qui manque
+- Si statut "Bloquant" : expliquer le problème et comment le corriger
+
+Réponds UNIQUEMENT avec un objet JSON valide, sans markdown, sans texte avant ou après :
+{
+  "results": [{
+    "alias": "FOURN_001",
+    "statut": "Conforme",
+    "siret_ok": true,
+    "tva_ok": true,
+    "siren_coherent": true,
+    "erreurs": [],
+    "suggestion": "Conforme 2024. Pour e-Invoicing 2026 : compléter en SIRET 14 chiffres (ajouter le code NIC 5 chiffres)"
+  }]
 }
+Le JSON doit commencer par { et finir par }.
+Aucun texte avant. Aucun texte après. Pas de markdown. Pas de backticks.`;
 
-function getInterpretation(taux) {
-  if (taux >= 92) return 'Votre base fournisseurs est conforme aux exigences e-Invoicing 2026.';
-  if (taux >= 75) return 'Des anomalies modérées nécessitent une correction avant l\'échéance e-Invoicing 2026.';
-  if (taux >= 50) return 'Risque élevé de blocage à l\'échéance e-Invoicing 2026. Action correctrice urgente recommandée.';
-  return 'Base fournisseurs non conforme. Intervention immédiate requise pour éviter tout blocage facturation.';
-}
+const BATCH_SIZE = 50;
 
-// ─────────────────────────────────────────────────────────────
-// 2. TABLEAU DE BORD
-// ─────────────────────────────────────────────────────────────
-function buildTableauDeBord(summary, results) {
-  const { total, conformes, a_corriger, bloquants } = summary;
+// ── Parser CSV simple ─────────────────────────────────────
+function parseCSV(content) {
+  const lines = content.trim().split('\n').filter(l => l.trim());
+  if (lines.length < 2) return [];
 
-  // Répartition anomalies par type
-  const anomalies = {
-    siret_invalide:     results.filter(r => !r.siret_ok).length,
-    tva_invalide:       results.filter(r => !r.tva_ok).length,
-    siren_incoherent:   results.filter(r => !r.siren_coherent).length,
-    doublons:           detectDoublons(results).length,
-    champs_manquants:   results.filter(r =>
-      r.erreurs?.some(e => e.toLowerCase().includes('manquant') || e.toLowerCase().includes('absent'))
-    ).length,
-  };
-
-  // Taux de conformité par catégorie
-  const tauxParCategorie = {
-    siret:  total > 0 ? Math.round((results.filter(r => r.siret_ok).length / total) * 100) : 0,
-    tva:    total > 0 ? Math.round((results.filter(r => r.tva_ok).length / total) * 100) : 0,
-    siren:  total > 0 ? Math.round((results.filter(r => r.siren_coherent).length / total) * 100) : 0,
-  };
-
-  // Répartition fournisseurs
-  const repartition = {
-    conformes:   { count: conformes,  pct: total > 0 ? Math.round((conformes  / total) * 100) : 0 },
-    a_corriger:  { count: a_corriger, pct: total > 0 ? Math.round((a_corriger / total) * 100) : 0 },
-    bloquants:   { count: bloquants,  pct: total > 0 ? Math.round((bloquants  / total) * 100) : 0 },
-  };
-
-  return {
-    repartition_fournisseurs: repartition,
-    repartition_anomalies:    anomalies,
-    taux_conformite_par_categorie: tauxParCategorie,
-    graphiques: buildGraphiquesSynthese(summary, anomalies),
-  };
-}
-
-function buildGraphiquesSynthese(summary, anomalies) {
-  // Données prêtes à consommer par recharts / chart.js côté frontend
-  return {
-    pie_statuts: [
-      { name: 'Conformes',   value: summary.conformes,  color: '#22c55e' },
-      { name: 'À corriger',  value: summary.a_corriger, color: '#f59e0b' },
-      { name: 'Bloquants',   value: summary.bloquants,  color: '#ef4444' },
-    ],
-    bar_anomalies: [
-      { name: 'SIRET invalide',    value: anomalies.siret_invalide,   color: '#ef4444' },
-      { name: 'TVA invalide',      value: anomalies.tva_invalide,     color: '#f97316' },
-      { name: 'SIREN incohérent',  value: anomalies.siren_incoherent, color: '#eab308' },
-      { name: 'Doublons',          value: anomalies.doublons,         color: '#8b5cf6' },
-      { name: 'Champs manquants',  value: anomalies.champs_manquants, color: '#6b7280' },
-    ],
-    jauge_score: {
-      valeur: summary.taux,
-      seuils: { vert: 92, orange: 75, rouge: 50 },
-    },
-  };
-}
-
-// ─────────────────────────────────────────────────────────────
-// 3. DÉTAIL DES ANOMALIES
-// ─────────────────────────────────────────────────────────────
-function buildDetailAnomalies(results) {
-  const doublonsMap = detectDoublonsMap(results);
-
-  const anomalies = results
-    .filter(r => !r.siret_ok || !r.tva_ok || !r.siren_coherent || r.statut !== 'Conforme')
-    .map(r => {
-      const types = [];
-      if (!r.siret_ok)       types.push('SIRET invalide');
-      if (!r.tva_ok)         types.push('TVA invalide ou incohérente');
-      if (!r.siren_coherent) types.push('SIREN incohérent');
-      if (doublonsMap[r.alias]) types.push(`Doublon de ${doublonsMap[r.alias]}`);
-      if (r.erreurs?.some(e => e.toLowerCase().includes('manquant'))) types.push('Champs critiques manquants');
-
-      return {
-        alias:         r.alias,
-        nom:           r.nom_reel || r.alias,
-        statut:        r.statut,
-        types_anomalie: types,
-        erreurs:       r.erreurs || [],
-        details: {
-          siret_ok:       r.siret_ok,
-          tva_ok:         r.tva_ok,
-          siren_coherent: r.siren_coherent,
-        },
-      };
-    });
-
-  return {
-    total_anomalies: anomalies.length,
-    par_type: groupByType(anomalies),
-    liste:    anomalies,
-  };
-}
-
-function groupByType(anomalies) {
-  const groups = {};
-  anomalies.forEach(a => {
-    a.types_anomalie.forEach(type => {
-      if (!groups[type]) groups[type] = [];
-      groups[type].push(a.nom);
-    });
-  });
-  return groups;
-}
-
-// ─────────────────────────────────────────────────────────────
-// 4. PLAN DE REMÉDIATION
-// ─────────────────────────────────────────────────────────────
-function buildPlanRemediation(results) {
-  const actions = [];
-
-  results.forEach(r => {
-    if (r.statut === 'Conforme') return;
-
-    const priorite = r.statut === 'Bloquant' ? 'CRITIQUE' : 'MODÉRÉE';
-    const impact   = r.statut === 'Bloquant'
-      ? 'Factures rejetées à l\'échéance e-Invoicing 2026'
-      : 'Risque de rejet ou délai de traitement accru';
-
-    if (!r.siret_ok) {
-      actions.push({
-        fournisseur:         r.nom_reel || r.alias,
-        probleme:            'SIRET/SIREN invalide ou absent',
-        correction_proposee: 'Contacter le fournisseur pour obtenir et valider le SIRET complet (14 chiffres). Vérifier sur data.gouv.fr/api-sirene.',
-        priorite,
-        impact_metier:       impact,
-        delai_recommande:    priorite === 'CRITIQUE' ? 'Immédiat (< 1 semaine)' : 'Court terme (< 1 mois)',
-      });
-    }
-
-    if (!r.tva_ok) {
-      actions.push({
-        fournisseur:         r.nom_reel || r.alias,
-        probleme:            'Numéro TVA invalide ou incohérent avec le SIREN',
-        correction_proposee: 'Vérifier le N° TVA intracommunautaire : format FR + 2 caractères + 9 chiffres. Valider sur ec.europa.eu/taxation_customs/vies.',
-        priorite,
-        impact_metier:       'Risque de rejet par la plateforme e-Invoicing. Possible fraude fiscale si TVA erronée.',
-        delai_recommande:    priorite === 'CRITIQUE' ? 'Immédiat (< 1 semaine)' : 'Court terme (< 1 mois)',
-      });
-    }
-
-    if (!r.siren_coherent) {
-      actions.push({
-        fournisseur:         r.nom_reel || r.alias,
-        probleme:            'Incohérence entre SIREN et TVA',
-        correction_proposee: 'Vérifier que les 9 derniers chiffres de la TVA correspondent au SIREN. Corriger l\'un ou l\'autre selon la source fiable.',
-        priorite:            'MODÉRÉE',
-        impact_metier:       'Rejet possible lors des contrôles automatiques de la plateforme de dématérialisation.',
-        delai_recommande:    'Court terme (< 1 mois)',
-      });
-    }
-  });
-
-  // Dédupliquer par fournisseur + problème
-  const unique = actions.filter((a, i, arr) =>
-    arr.findIndex(b => b.fournisseur === a.fournisseur && b.probleme === a.probleme) === i
+  const sep = lines[0].split(';').length > lines[0].split(',').length ? ';' : ',';
+  const headers = lines[0].split(sep).map(h =>
+    h.trim().toLowerCase().replace(/['"]/g, '')
   );
 
-  const critiques = unique.filter(a => a.priorite === 'CRITIQUE');
-  const moderees  = unique.filter(a => a.priorite === 'MODÉRÉE');
-
-  return {
-    total_actions: unique.length,
-    actions_critiques: critiques.length,
-    actions_moderees:  moderees.length,
-    par_priorite: { CRITIQUE: critiques, MODÉRÉE: moderees },
-    liste_complete: unique,
-  };
+  return lines.slice(1, 10001).map(line => {
+    const cols = line.split(sep).map(c => c.trim().replace(/^["']|["']$/g, ''));
+    const obj = {};
+    headers.forEach((h, i) => { obj[h] = cols[i] || ''; });
+    return obj;
+  });
 }
 
-// ─────────────────────────────────────────────────────────────
-// 5. SCORING FOURNISSEUR
-// ─────────────────────────────────────────────────────────────
-function buildScoringFournisseurs(results) {
-  const doublonsMap = detectDoublonsMap(results);
+// ── Pseudonymisation ──────────────────────────────────────
+function pseudonymize(rows) {
+  const aliasMap = {};
+  const pseudoRows = rows.map((row, i) => {
+    const alias = `FOURN_${String(i + 1).padStart(3, '0')}`;
 
-  const scored = results.map(r => {
-    let score = 100;
-    const penalites = [];
+    const nomKey =
+      Object.keys(row).find(k => k.toLowerCase().trim() === 'dénomination') ||
+      Object.keys(row).find(k => k.toLowerCase().trim() === 'denomination') ||
+      Object.keys(row).find(k => k.toLowerCase().includes('dénom')) ||
+      Object.keys(row).find(k => k.toLowerCase().includes('denom')) ||
+      Object.keys(row).find(k => ['nom', 'name', 'raison', 'libelle'].some(t => k.toLowerCase().includes(t))) ||
+      Object.keys(row)[2] ||
+      Object.keys(row)[0];
 
-    if (!r.siret_ok)       { score -= 40; penalites.push('SIRET invalide (-40)'); }
-    if (!r.tva_ok)         { score -= 30; penalites.push('TVA invalide (-30)'); }
-    if (!r.siren_coherent) { score -= 20; penalites.push('SIREN incohérent (-20)'); }
-    if (doublonsMap[r.alias]) { score -= 10; penalites.push('Doublon détecté (-10)'); }
+    aliasMap[alias] = String(row[nomKey] || alias).trim();
 
-    score = Math.max(0, score);
+    const sirenKey = Object.keys(row).find(k =>
+      ['siren', 'siret'].some(t => k.toLowerCase().includes(t))
+    );
+    const sirenVal = sirenKey ? String(row[sirenKey] || '').replace(/[\s.]/g, '') : '';
 
-    let categorie;
-    if (score >= 80)      categorie = 'Conforme';
-    else if (score >= 50) categorie = 'À surveiller';
-    else                  categorie = 'Action immédiate';
+    const tvaKey = Object.keys(row).find(k =>
+      ['tva', 'vat'].some(t => k.toLowerCase().includes(t))
+    );
+    const tvaVal = tvaKey ? String(row[tvaKey] || '').replace(/[\s]/g, '').toUpperCase() : '';
 
-    return {
-      alias:     r.alias,
-      nom:       r.nom_reel || r.alias,
-      score,
-      categorie,
-      penalites,
-      statut_ia: r.statut,
-      suggestion: r.suggestion || '',
-    };
+    return { alias, siret: sirenVal, tva: tvaVal };
   });
 
-  // Tri par score croissant (les plus urgents en premier)
-  scored.sort((a, b) => a.score - b.score);
-
-  const distribution = {
-    conformes:        scored.filter(s => s.categorie === 'Conforme').length,
-    a_surveiller:     scored.filter(s => s.categorie === 'À surveiller').length,
-    action_immediate: scored.filter(s => s.categorie === 'Action immédiate').length,
-  };
-
-  return {
-    distribution,
-    score_moyen: scored.length > 0
-      ? Math.round(scored.reduce((acc, s) => acc + s.score, 0) / scored.length)
-      : 0,
-    fournisseurs: scored,
-  };
+  return { pseudoRows, aliasMap };
 }
 
-// ─────────────────────────────────────────────────────────────
-// 6. SUIVI MENSUEL (structure pour abonnement)
-// ─────────────────────────────────────────────────────────────
-function buildSuiviMensuel(summary, previousReport = null) {
-  const suivi = {
-    periode: new Date().toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' }),
-    score_actuel: summary.taux,
-    score_precedent: previousReport?.score_global ?? null,
-    evolution: previousReport
-      ? summary.taux - previousReport.score_global
-      : null,
-    nouvelles_anomalies: previousReport
-      ? Math.max(0, (summary.a_corriger + summary.bloquants) - previousReport.anomalies_total)
-      : null,
-    fournisseurs_ajoutes: previousReport
-      ? Math.max(0, summary.total - previousReport.total_fournisseurs)
-      : null,
-    message: previousReport
-      ? buildMessageEvolution(summary.taux, previousReport.score_global)
-      : 'Premier audit — référence établie pour le suivi mensuel.',
-    historique_disponible: !!previousReport,
-  };
+// ── Appel Claude pour un lot ──────────────────────────────
+async function analyzeWithClaude(batch, batchIndex) {
+  const message = await anthropic.messages.create({
+    model:      'claude-haiku-4-5-20251001',
+    max_tokens: 8000,
+    system:     SYSTEM_PROMPT,
+    messages: [{
+      role:    'user',
+      content: `Audite ces ${batch.length} fournisseurs pseudonymisés (lot ${batchIndex + 1}) :\n${JSON.stringify(batch)}`,
+    }],
+  });
 
-  return suivi;
+  const rawText = message.content
+    .map(b => b.type === 'text' ? b.text : '')
+    .join('')
+    .trim()
+    .replace(/^```json\s*/i, '')
+    .replace(/^```\s*/i, '')
+    .replace(/```\s*$/i, '')
+    .trim();
+
+  console.log(`[BATCH ${batchIndex + 1}] RAW:`, rawText.slice(0, 300));
+
+  try {
+    const parsed = JSON.parse(rawText);
+    return parsed.results || [];
+  } catch (err) {
+    console.error(`[BATCH ${batchIndex + 1}] Erreur parsing:`, err.message);
+    return batch.map(r => ({
+      alias:          r.alias,
+      statut:         'Bloquant',
+      siret_ok:       false,
+      tva_ok:         false,
+      siren_coherent: false,
+      erreurs:        ['Erreur analyse IA pour ce lot'],
+      suggestion:     'Réessayer l\'analyse',
+    }));
+  }
 }
 
-function buildMessageEvolution(scoreCourant, scorePrecedent) {
-  const delta = scoreCourant - scorePrecedent;
-  if (delta > 5)  return `Progression de +${delta}% par rapport au mois précédent. Continuez les corrections.`;
-  if (delta < -5) return `Régression de ${delta}% — de nouvelles anomalies ont été détectées.`;
-  return 'Score stable par rapport au mois précédent.';
+// ── Génération CSV rapport ────────────────────────────────
+function buildCSVReport(results, aliasMap) {
+  const BOM = '\uFEFF';
+  const header = [
+    'Nom d\'origine', 'Alias', 'Statut', 'SIRET/SIREN valide', 'TVA valide',
+    'Cohérence SIREN', 'Erreurs', 'Recommandation e-Invoicing 2026'
+  ].join(';');
+
+  const rows = results.map(r => [
+    `"${(aliasMap[r.alias] || r.alias).replace(/"/g, '""')}"`,
+    r.alias,
+    r.statut,
+    r.siret_ok ? 'OUI' : 'NON',
+    r.tva_ok   ? 'OUI' : 'NON',
+    r.siren_coherent ? 'OUI' : 'NON',
+    `"${(r.erreurs || []).join(' | ')}"`,
+    `"${(r.suggestion || '').replace(/"/g, '""')}"`,
+  ].join(';'));
+
+  return BOM + header + '\n' + rows.join('\n');
 }
 
-// ─────────────────────────────────────────────────────────────
-// 7. INDICATEURS DE VALEUR (ROI)
-// ─────────────────────────────────────────────────────────────
-function buildIndicateursValeur(summary) {
-  const { total, a_corriger, bloquants } = summary;
-  const anomaliesTotal = a_corriger + bloquants;
+// ── Service principal d'analyse ───────────────────────────
+async function runAuditAnalysis(fileId, user) {
+  const startTime = Date.now();
 
-  // Hypothèses métier conservatrices
-  const TEMPS_MANUEL_PAR_ANOMALIE_H = 0.5;   // 30 min par anomalie en manuel
-  const TAUX_HORAIRE_COMPTABLE      = 45;    // €/h chargé
-  const COUT_REJET_FACTURE          = 35;    // € par facture rejetée estimé
-
-  const tempsManutelEconomise = anomaliesTotal * TEMPS_MANUEL_PAR_ANOMALIE_H;
-  const coutInterneEstime     = tempsManutelEconomise * TAUX_HORAIRE_COMPTABLE;
-  const gainEvitementRejets   = bloquants * COUT_REJET_FACTURE;
-  const gainTotal             = coutInterneEstime + gainEvitementRejets;
-
-  return {
-    anomalies_detectees:      anomaliesTotal,
-    temps_manuel_economise_h: Math.round(tempsManutelEconomise * 10) / 10,
-    cout_interne_estime_eur:  Math.round(coutInterneEstime),
-    gain_evitement_rejets_eur: Math.round(gainEvitementRejets),
-    gain_total_estime_eur:    Math.round(gainTotal),
-    ratio_fournisseurs_traites: total,
-    hypotheses: {
-      temps_par_anomalie_h:  TEMPS_MANUEL_PAR_ANOMALIE_H,
-      taux_horaire_eur:      TAUX_HORAIRE_COMPTABLE,
-      cout_rejet_facture_eur: COUT_REJET_FACTURE,
-    },
-    message_valeur: `DataRemédiation vous a économisé environ ${Math.round(tempsManutelEconomise)} heures de travail manuel, soit ~${Math.round(gainTotal)} € de coût interne évité.`,
-  };
-}
-
-// ─────────────────────────────────────────────────────────────
-// 8. CONTRÔLES PREMIUM
-// ─────────────────────────────────────────────────────────────
-function buildControlesPremium(results) {
-  const doublons = detectDoublons(results);
-
-  // Correspondance SIRET / raison sociale (signaux d'alerte)
-  const alertesFraude = results.filter(r => {
-    // Heuristique : statut Bloquant + ni SIRET ni TVA valides = profil suspect
-    return r.statut === 'Bloquant' && !r.siret_ok && !r.tva_ok;
-  }).map(r => ({
-    nom:    r.nom_reel || r.alias,
-    alerte: 'Fournisseur sans identifiants valides — vérification manuelle recommandée',
-    niveau: 'ÉLEVÉ',
-  }));
-
-  // Cohérence avancée SIRET / TVA
-  const incoherencesAvancees = results.filter(r =>
-    r.siret_ok && r.tva_ok && !r.siren_coherent
-  ).map(r => ({
-    nom:    r.nom_reel || r.alias,
-    alerte: 'SIRET et TVA valides individuellement mais SIREN incohérent entre les deux',
-    niveau: 'MODÉRÉ',
-  }));
-
-  return {
-    disponible: true,
-    doublons_detectes: {
-      count: doublons.length,
-      liste: doublons,
-    },
-    alertes_fraude_potentielle: {
-      count: alertesFraude.length,
-      liste: alertesFraude,
-    },
-    incoherences_avancees: {
-      count: incoherencesAvancees.length,
-      liste: incoherencesAvancees,
-    },
-    note: 'Les contrôles premium incluront prochainement : vérification INPI, détection fournisseurs inactifs >3 ans, score de risque fraude avancé.',
-  };
-}
-
-// ─────────────────────────────────────────────────────────────
-// UTILITAIRES — Détection doublons
-// ─────────────────────────────────────────────────────────────
-function detectDoublons(results) {
-  // Doublon = même SIREN (extrait du SIRET) sous deux alias différents
-  const sirenMap = {};
-  results.forEach(r => {
-    const siret = String(r.siret || '').replace(/\s/g, '');
-    if (siret.length >= 9) {
-      const siren = siret.slice(0, 9);
-      if (!sirenMap[siren]) sirenMap[siren] = [];
-      sirenMap[siren].push(r.nom_reel || r.alias);
+  const updateStatus = async (status, extra = {}) => {
+    const setClauses = ['status = $2'];
+    const values     = [fileId, status];
+    let idx = 3;
+    for (const [key, val] of Object.entries(extra)) {
+      setClauses.push(`${key} = $${idx++}`);
+      values.push(val);
     }
-  });
+    await pool.query(
+      `UPDATE audit_files SET ${setClauses.join(', ')} WHERE id = $1`,
+      values
+    );
+  };
 
-  const doublons = [];
-  Object.entries(sirenMap).forEach(([siren, noms]) => {
-    if (noms.length > 1) {
-      doublons.push({ siren, fournisseurs: noms });
-    }
-  });
-  return doublons;
-}
+  try {
+    await updateStatus('analyzing', { analysis_started_at: new Date() });
+    safeLog('info', 'AUDIT_STARTED', { userId: user.id, tenantId: user.tenant_id });
 
-function detectDoublonsMap(results) {
-  // Retourne { alias: "nom du doublon" } pour les doublons
-  const sirenMap = {};
-  results.forEach(r => {
-    const siret = String(r.siret || '').replace(/\s/g, '');
-    if (siret.length >= 9) {
-      const siren = siret.slice(0, 9);
-      if (!sirenMap[siren]) sirenMap[siren] = [];
-      sirenMap[siren].push({ alias: r.alias, nom: r.nom_reel || r.alias });
-    }
-  });
+    const fileResult = await pool.query(
+      'SELECT file_path, mime_type, original_name FROM audit_files WHERE id = $1',
+      [fileId]
+    );
+    if (fileResult.rows.length === 0) throw new Error('Fichier introuvable en base');
 
-  const map = {};
-  Object.values(sirenMap).forEach(group => {
-    if (group.length > 1) {
-      group.forEach((item, i) => {
-        const others = group.filter((_, j) => j !== i).map(g => g.nom).join(', ');
-        map[item.alias] = others;
+    const { file_path, mime_type, original_name } = fileResult.rows[0];
+
+    if (mime_type === 'application/pdf') {
+      await updateStatus('done', {
+        completed_at: new Date(),
+        row_count: 0, conformes: 0, a_corriger: 0, bloquants: 0, taux_conformite: 100,
       });
+      await pool.query(
+        `INSERT INTO audit_reports (file_id, tenant_id, pdf_content, summary)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (file_id) DO UPDATE SET pdf_content = $3`,
+        [fileId, user.tenant_id, 'Fichier PDF — analyse structurelle non applicable', JSON.stringify({ isPDF: true })]
+      );
+      return;
     }
-  });
-  return map;
+
+    if (!fs.existsSync(file_path)) throw new Error('Fichier physique introuvable');
+
+    let rows;
+    if (
+      mime_type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+      mime_type === 'application/vnd.ms-excel' ||
+      file_path.endsWith('.xlsx') || file_path.endsWith('.xls')
+    ) {
+      const workbook = XLSX.readFile(file_path);
+      const sheetName = workbook.SheetNames[0];
+      const sheet = workbook.Sheets[sheetName];
+      rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+      rows = rows.map(row => {
+        const normalized = {};
+        Object.keys(row).forEach(k => { normalized[k.toLowerCase().trim()] = String(row[k] || ''); });
+        return normalized;
+      });
+    } else {
+      const rawContent = fs.readFileSync(file_path, 'utf-8');
+      rows = parseCSV(rawContent);
+    }
+
+    if (rows.length === 0) throw new Error('Aucune donnée exploitable dans le fichier');
+
+    const { pseudoRows, aliasMap } = pseudonymize(rows);
+    safeLog('info', 'DATA_PSEUDONYMIZED', {
+      userId: user.id, tenantId: user.tenant_id, rowCount: pseudoRows.length
+    });
+
+    // Traitement par lots
+    const allResults = [];
+    const totalBatches = Math.ceil(pseudoRows.length / BATCH_SIZE);
+    console.log(`[AUDIT] ${pseudoRows.length} fournisseurs → ${totalBatches} lot(s)`);
+
+    for (let i = 0; i < pseudoRows.length; i += BATCH_SIZE) {
+      const batch = pseudoRows.slice(i, i + BATCH_SIZE);
+      const batchIndex = Math.floor(i / BATCH_SIZE);
+      console.log(`[AUDIT] Lot ${batchIndex + 1}/${totalBatches}`);
+      const batchResults = await analyzeWithClaude(batch, batchIndex);
+      allResults.push(...batchResults);
+    }
+
+    // Calcul summary global
+    const conformes  = allResults.filter(r => (r.statut||'').includes('Conforme')).length;
+    const a_corriger = allResults.filter(r => (r.statut||'').includes('corriger')).length;
+    const bloquants  = allResults.filter(r => (r.statut||'').includes('Bloquant')).length;
+    const taux       = allResults.length > 0 ? Math.round((conformes / allResults.length) * 100) : 0;
+
+    const summary = { total: allResults.length, conformes, a_corriger, bloquants, taux };
+
+    const resultsWithNoms = allResults.map(r => ({
+      ...r,
+      nom_reel: aliasMap[r.alias] || r.alias,
+    }));
+
+    // ── Récupérer le rapport précédent pour le suivi mensuel ──
+    let previousReport = null;
+    try {
+      const prevResult = await pool.query(
+        `SELECT summary FROM audit_reports
+         WHERE tenant_id = $1 AND file_id != $2
+         ORDER BY updated_at DESC LIMIT 1`,
+        [user.tenant_id, fileId]
+      );
+      if (prevResult.rows.length > 0) {
+        const prevSummary = prevResult.rows[0].summary;
+        const parsed = typeof prevSummary === 'string' ? JSON.parse(prevSummary) : prevSummary;
+        previousReport = parsed?.score_executif
+          ? {
+              score_global:       parsed.score_executif.score_global,
+              anomalies_total:    parsed.score_executif.resume.anomalies_detectees,
+              total_fournisseurs: parsed.score_executif.resume.fournisseurs_analyses,
+            }
+          : null;
+      }
+    } catch (e) {
+      safeLog('warn', 'PREV_REPORT_FETCH_FAILED', { message: e.message });
+    }
+
+    // ── Générer le rapport complet structuré (8 sections) ──
+    const fullReport = generateFullReport(
+      { originalName: original_name, tenantId: user.tenant_id },
+      resultsWithNoms,
+      summary,
+      previousReport
+    );
+
+    const csvContent = buildCSVReport(resultsWithNoms, aliasMap);
+    const aiResult   = { summary, results: resultsWithNoms, aliasMap, rapport: fullReport };
+
+    await pool.query(
+      `INSERT INTO audit_reports (file_id, tenant_id, csv_content, pdf_content, summary, alias_map)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (file_id) DO UPDATE
+         SET csv_content=$3, pdf_content=$4, summary=$5, alias_map=$6, updated_at=NOW()`,
+      [
+        fileId, user.tenant_id,
+        csvContent,
+        JSON.stringify(fullReport),
+        JSON.stringify(aiResult),
+        JSON.stringify(aliasMap),
+      ]
+    );
+
+    if (fs.existsSync(file_path)) {
+      fs.unlinkSync(file_path);
+      safeLog('info', 'SOURCE_FILE_PURGED', { userId: user.id, tenantId: user.tenant_id });
+    }
+
+    await updateStatus('done', {
+      completed_at:    new Date(),
+      row_count:       summary.total,
+      conformes:       summary.conformes,
+      a_corriger:      summary.a_corriger,
+      bloquants:       summary.bloquants,
+      taux_conformite: summary.taux,
+    });
+
+    const duration = Date.now() - startTime;
+    safeLog('info', 'AUDIT_COMPLETED', {
+      userId: user.id, tenantId: user.tenant_id,
+      rowCount: summary.total, batches: totalBatches, durationMs: duration,
+    });
+
+  } catch (err) {
+    safeLog('error', 'AUDIT_FAILED', {
+      userId: user.id, tenantId: user.tenant_id,
+      errorType: err.name || 'UnknownError',
+      message: err.message,
+    });
+    await updateStatus('error', {
+      error_message: err.message.slice(0, 500),
+    });
+    throw err;
+  }
 }
 
-// ─────────────────────────────────────────────────────────────
-// EXPORT PRINCIPAL
-// ─────────────────────────────────────────────────────────────
-
-/**
- * generateFullReport()
- *
- * @param {Object} fileInfo       — { originalName, tenantId }
- * @param {Array}  results        — tableau de résultats Claude (avec nom_reel)
- * @param {Object} summary        — { total, conformes, a_corriger, bloquants, taux }
- * @param {Object} previousReport — (optionnel) dernier rapport du tenant pour suivi mensuel
- *
- * @returns {Object} rapport JSON complet couvrant les 8 sections du modèle
- */
-function generateFullReport(fileInfo, results, summary, previousReport = null) {
-  const date = new Date().toLocaleDateString('fr-FR', {
-    year: 'numeric', month: 'long', day: 'numeric',
-    hour: '2-digit', minute: '2-digit',
-  });
-
-  return {
-    meta: {
-      version:       '2.0',
-      fichier:       fileInfo.originalName,
-      tenant_id:     fileInfo.tenantId,
-      genere_le:     date,
-      genere_par:    'DataRemédiation — Confidentiel',
-    },
-
-    // Section 1
-    score_executif: buildScoreExecutif(summary, results),
-
-    // Section 2
-    tableau_de_bord: buildTableauDeBord(summary, results),
-
-    // Section 3
-    detail_anomalies: buildDetailAnomalies(results),
-
-    // Section 4
-    plan_remediation: buildPlanRemediation(results),
-
-    // Section 5
-    scoring_fournisseurs: buildScoringFournisseurs(results),
-
-    // Section 6
-    suivi_mensuel: buildSuiviMensuel(summary, previousReport),
-
-    // Section 7
-    indicateurs_valeur: buildIndicateursValeur(summary),
-
-    // Section 8
-    controles_premium: buildControlesPremium(results),
-  };
-}
-
-module.exports = { generateFullReport };
+module.exports = { runAuditAnalysis };
