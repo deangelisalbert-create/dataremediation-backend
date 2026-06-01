@@ -1,4 +1,4 @@
-// routes/reports.js — Rapport PDF enrichi DataRemédiation
+// routes/reports.js ? Rapport PDF enrichi DataRemediation
 const express  = require('express');
 const jwt      = require('jsonwebtoken');
 const XLSX     = require('xlsx');
@@ -97,7 +97,7 @@ async function generatePDF(summaryData, fileName, companyName) {
   const tauxTva    = total > 0 ? Math.round(results.filter(r=>r.tva_ok).length/total*100) : 0;
   const tauxSiren  = total > 0 ? Math.round(results.filter(r=>r.siren_coherent).length/total*100) : 0;
 
-  // Doublons détectés
+  // Doublons detectes
   const sirenMap = {};
   results.forEach(r => {
     const siret = String(r.siret||'').replace(/\s/g,'');
@@ -121,7 +121,7 @@ async function generatePDF(summaryData, fileName, companyName) {
   const coutAudit        = 490;
   const economie         = coutManuel - coutAudit;
 
-  // Benchmark (simulé)
+  // Benchmark (simule)
   const scoreMoyen = 65;
 
   const scoreColor  = taux >= 80 ? C.accent : taux >= 50 ? C.warn : C.danger;
@@ -132,9 +132,9 @@ async function generatePDF(summaryData, fileName, companyName) {
   const W = 595, H = 842;
   const TOTAL_PAGES = 4;
 
-  // ══════════════════════════════════════════════════════
-  // PAGE 1 — SYNTHÈSE DIRIGEANT
-  // ══════════════════════════════════════════════════════
+  // ??????????????????????????????????????????????????????
+  // PAGE 1 ? SYNTHESE DIRIGEANT
+  // ??????????????????????????????????????????????????????
   const page1 = pdfDoc.addPage([W, H]);
   drawPageHeader(page1, helveticaBold, helvetica, logoImage, 'SYNTHESE DIRIGEANT', 1, TOTAL_PAGES, W, H);
 
@@ -147,7 +147,7 @@ async function generatePDF(summaryData, fileName, companyName) {
   page1.drawText(`Entreprise : ${truncate(companyName||'N/A',55)}   |   Date : ${new Date().toLocaleDateString('fr-FR',{day:'2-digit',month:'long',year:'numeric'})}`, { x:30, y, size:7.5, font:helvetica, color:C.muted });
   y -= 20;
 
-  // ── Bloc score + risque ───────────────────────────────
+  // ?? Bloc score + risque ???????????????????????????????
   page1.drawRectangle({ x:20, y:y-90, width:W-40, height:95, color:C.surface });
   page1.drawRectangle({ x:20, y:y+3, width:W-40, height:3, color:scoreColor });
 
@@ -156,10 +156,10 @@ async function generatePDF(summaryData, fileName, companyName) {
   page1.drawText(taux+'%', { x:36, y:y-54, size:42, font:helveticaBold, color:scoreColor });
   page1.drawText(scoreLabel, { x:36, y:y-70, size:9, font:helveticaBold, color:scoreColor });
 
-  // Séparateur vertical
+  // Separateur vertical
   page1.drawRectangle({ x:160, y:y-82, width:1, height:80, color:C.muted, opacity:0.3 });
 
-  // Risque opérationnel
+  // Risque operationnel
   page1.drawText('RISQUE OPERATIONNEL', { x:172, y:y-14, size:7, font:helveticaBold, color:C.muted });
   page1.drawText(`${bloquants} fournisseurs susceptibles de provoquer`, { x:172, y:y-28, size:8, font:helvetica, color:C.text });
   page1.drawText('un rejet de facture electronique', { x:172, y:y-40, size:8, font:helvetica, color:C.text });
@@ -167,21 +167,21 @@ async function generatePDF(summaryData, fileName, companyName) {
   page1.drawText('Niveau de risque :', { x:172, y:y-68, size:7.5, font:helvetica, color:C.muted });
   page1.drawText(niveauRisque, { x:248, y:y-68, size:8, font:helveticaBold, color:niveauColor });
 
-  // Séparateur vertical 2
+  // Separateur vertical 2
   page1.drawRectangle({ x:380, y:y-82, width:1, height:80, color:C.muted, opacity:0.3 });
 
-  // Temps économisé
+  // Temps economise
   page1.drawText('TEMPS ECONOMISE', { x:392, y:y-14, size:7, font:helveticaBold, color:C.muted });
-  page1.drawText('Manuel estimé :', { x:392, y:y-28, size:7.5, font:helvetica, color:C.muted });
+  page1.drawText('Manuel estime :', { x:392, y:y-28, size:7.5, font:helvetica, color:C.muted });
   page1.drawText(`${tempsTotal} heures`, { x:470, y:y-28, size:8, font:helveticaBold, color:C.warn });
   page1.drawText('Avec DataRemediation :', { x:392, y:y-42, size:7.5, font:helvetica, color:C.muted });
   page1.drawText('5 minutes', { x:470, y:y-42, size:8, font:helveticaBold, color:C.accent });
   page1.drawText('Gain :', { x:392, y:y-58, size:7.5, font:helvetica, color:C.muted });
-  page1.drawText(`${tempsTotal}h x ${TAUX_HORAIRE}€ = ${coutManuel}€`, { x:418, y:y-58, size:8, font:helveticaBold, color:C.accent });
+  page1.drawText(`${tempsTotal}h x ${TAUX_HORAIRE}? = ${coutManuel}?`, { x:418, y:y-58, size:8, font:helveticaBold, color:C.accent });
 
   y -= 106;
 
-  // ── 4 KPIs ────────────────────────────────────────────
+  // ?? 4 KPIs ????????????????????????????????????????????
   const kpis = [
     { label:'TOTAL',      value:total,     color:'#3d8eff' },
     { label:'CONFORMES',  value:conformes, color:'#00e5a0' },
@@ -199,7 +199,7 @@ async function generatePDF(summaryData, fileName, companyName) {
   });
   y -= 84;
 
-  // ── Indice préparation e-Invoicing 2026 ───────────────
+  // ?? Indice preparation e-Invoicing 2026 ???????????????
   y -= 12;
   page1.drawRectangle({ x:20, y:y-72, width:W-40, height:76, color:C.surface });
   page1.drawRectangle({ x:20, y:y+2, width:W-40, height:3, color:C.blue });
@@ -220,15 +220,15 @@ async function generatePDF(summaryData, fileName, companyName) {
     page1.drawRectangle({ x:jx, y:y-64, width:Math.min(bw*(j.value/100),bw), height:4, color:j.color });
   });
 
-  const readyLabel = taux >= 90 ? '✓ PRET' : taux >= 75 ? '⚠ PARTIELLEMENT PRET' : '✗ NON PRET';
+  const readyLabel = taux >= 90 ? 'OK PRET' : taux >= 75 ? '/!\ PARTIELLEMENT PRET' : 'NON NON PRET';
   page1.drawText(readyLabel, { x:440, y:y-44, size:11, font:helveticaBold, color:niveauColor });
   y -= 86;
 
-  // ── Benchmark ─────────────────────────────────────────
+  // ?? Benchmark ?????????????????????????????????????????
   y -= 12;
   page1.drawRectangle({ x:20, y:y-72, width:W-40, height:76, color:C.surface });
   page1.drawRectangle({ x:20, y:y+2, width:W-40, height:3, color:C.purple });
-  page1.drawText('BENCHMARK — ENTREPRISES SIMILAIRES', { x:30, y:y-14, size:8, font:helveticaBold, color:C.purple });
+  page1.drawText('BENCHMARK ? ENTREPRISES SIMILAIRES', { x:30, y:y-14, size:8, font:helveticaBold, color:C.purple });
 
   // Barre benchmark
   const benchW = W - 100;
@@ -248,15 +248,15 @@ async function generatePDF(summaryData, fileName, companyName) {
     color: ecartBench >= 0 ? C.accent : C.danger
   });
 
-  // ══════════════════════════════════════════════════════
-  // PAGE 2 — SCORES PAR CATÉGORIE + ESTIMATION FINANCIÈRE
-  // ══════════════════════════════════════════════════════
+  // ??????????????????????????????????????????????????????
+  // PAGE 2 ? SCORES PAR CATEGORIE + ESTIMATION FINANCIERE
+  // ??????????????????????????????????????????????????????
   const page2 = pdfDoc.addPage([W, H]);
   drawPageHeader(page2, helveticaBold, helvetica, logoImage, 'ANALYSE DETAILLEE', 2, TOTAL_PAGES, W, H);
 
   y = H - 75;
 
-  // ── Score par catégorie ───────────────────────────────
+  // ?? Score par categorie ???????????????????????????????
   page2.drawText('SCORE PAR CATEGORIE', { x:30, y, size:11, font:helveticaBold, color:C.white });
   page2.drawText('Ou agir en priorite', { x:30, y:y-14, size:8, font:helvetica, color:C.muted });
   y -= 26;
@@ -289,7 +289,7 @@ async function generatePDF(summaryData, fileName, companyName) {
 
   y -= 4*52 + 20;
 
-  // ── Temps économisé détaillé ──────────────────────────
+  // ?? Temps economise detaille ??????????????????????????
   y -= 12;
   page2.drawText('DETAIL DU TEMPS ECONOMISE', { x:30, y, size:11, font:helveticaBold, color:C.white });
   page2.drawText('Estimation de traitement manuel vs DataRemediation', { x:30, y:y-14, size:8, font:helvetica, color:C.muted });
@@ -328,16 +328,16 @@ async function generatePDF(summaryData, fileName, companyName) {
   page2.drawText('5 minutes', { x:W-100, y:y-10, size:9, font:helveticaBold, color:C.accent });
   y -= 30;
 
-  // ── Estimation financière ──────────────────────────────
+  // ?? Estimation financiere ??????????????????????????????
   y -= 16;
   page2.drawText('ESTIMATION FINANCIERE', { x:30, y, size:11, font:helveticaBold, color:C.white });
   page2.drawText('Valeur generee par DataRemediation', { x:30, y:y-14, size:8, font:helvetica, color:C.muted });
   y -= 26;
 
   const finBlocs = [
-    { label:'Cout interne estime',         value:`${tempsTotal}h x ${TAUX_HORAIRE}€/h = ${coutManuel}€`, color:'#ffb340', desc:'Traitement manuel' },
-    { label:'Audit DataRemediation',       value:`${coutAudit}€`, color:'#3d8eff', desc:'Tarif audit ponctuel' },
-    { label:'Economie potentielle',        value:`${economie}€`, color:'#00e5a0', desc:'+ securisation conformite 2026' },
+    { label:'Cout interne estime',         value:`${tempsTotal}h x ${TAUX_HORAIRE}?/h = ${coutManuel}?`, color:'#ffb340', desc:'Traitement manuel' },
+    { label:'Audit DataRemediation',       value:`${coutAudit}?`, color:'#3d8eff', desc:'Tarif audit ponctuel' },
+    { label:'Economie potentielle',        value:`${economie}?`, color:'#00e5a0', desc:'+ securisation conformite 2026' },
   ];
 
   finBlocs.forEach((b, i) => {
@@ -351,16 +351,16 @@ async function generatePDF(summaryData, fileName, companyName) {
     page2.drawText(b.desc, { x:bx+8, y:y-60, size:6.5, font:helvetica, color:C.muted });
   });
 
-  // ══════════════════════════════════════════════════════
-  // PAGE 3 — TOP 10 PRIORITAIRES + ANOMALIES
-  // ══════════════════════════════════════════════════════
+  // ??????????????????????????????????????????????????????
+  // PAGE 3 ? TOP 10 PRIORITAIRES + ANOMALIES
+  // ??????????????????????????????????????????????????????
   const page3 = pdfDoc.addPage([W, H]);
   drawPageHeader(page3, helveticaBold, helvetica, logoImage, 'PLAN DE REMEDIATION', 3, TOTAL_PAGES, W, H);
 
   y = H - 75;
 
-  // ── Top 10 prioritaires ───────────────────────────────
-  page3.drawText('TOP 10 — FOURNISSEURS A TRAITER EN PRIORITE', { x:30, y, size:11, font:helveticaBold, color:C.white });
+  // ?? Top 10 prioritaires ???????????????????????????????
+  page3.drawText('TOP 10 ? FOURNISSEURS A TRAITER EN PRIORITE', { x:30, y, size:11, font:helveticaBold, color:C.white });
   page3.drawText('Classement par niveau d\'urgence', { x:30, y:y-14, size:8, font:helvetica, color:C.muted });
   y -= 26;
 
@@ -405,7 +405,7 @@ async function generatePDF(summaryData, fileName, companyName) {
 
   y -= 20;
 
-  // ── Anomalies détaillées ──────────────────────────────
+  // ?? Anomalies detaillees ??????????????????????????????
   const bloquantsList = results.filter(r => (r.statut||'').includes('Bloquant')).slice(0, 8);
   const corrigerList  = results.filter(r => (r.statut||'').includes('corriger')).slice(0, 5);
 
@@ -452,15 +452,15 @@ async function generatePDF(summaryData, fileName, companyName) {
     });
   }
 
-  // ══════════════════════════════════════════════════════
-  // PAGE 4 — LISTE COMPLÈTE
-  // ══════════════════════════════════════════════════════
+  // ??????????????????????????????????????????????????????
+  // PAGE 4 ? LISTE COMPLETE
+  // ??????????????????????????????????????????????????????
   const page4 = pdfDoc.addPage([W, H]);
-  drawPageHeader(page4, helveticaBold, helvetica, logoImage, `LISTE COMPLETE — ${total} FOURNISSEURS`, 4, TOTAL_PAGES, W, H);
+  drawPageHeader(page4, helveticaBold, helvetica, logoImage, `LISTE COMPLETE ? ${total} FOURNISSEURS`, 4, TOTAL_PAGES, W, H);
 
   y = H - 72;
 
-  // En-tête tableau
+  // En-tete tableau
   page4.drawRectangle({ x:20, y:y-16, width:W-40, height:18, color:C.surface });
   page4.drawRectangle({ x:20, y:y, width:W-40, height:2, color:C.accent });
   page4.drawText('Fournisseur',    { x:26,  y:y-11, size:6.5, font:helveticaBold, color:C.muted });
@@ -491,7 +491,7 @@ async function generatePDF(summaryData, fileName, companyName) {
   });
 
   if (results.length > 44) {
-    page4.drawText(`... et ${results.length-44} autres fournisseurs — voir fichier Excel pour la liste complete`, {
+    page4.drawText(`... et ${results.length-44} autres fournisseurs ? voir fichier Excel pour la liste complete`, {
       x:26, y:y+2, size:7, font:helvetica, color:C.muted
     });
   }
@@ -499,7 +499,7 @@ async function generatePDF(summaryData, fileName, companyName) {
   return Buffer.from(await pdfDoc.save());
 }
 
-// ── POST /api/reports/:fileId/link ────────────────────────────────────────────
+// ?? POST /api/reports/:fileId/link ????????????????????????????????????????????
 router.post('/:fileId/link',
   authenticate,
   checkRole(['admin', 'client']),
@@ -532,7 +532,7 @@ router.post('/:fileId/link',
   }
 );
 
-// ── GET /api/reports/download/:token ─────────────────────────────────────────
+// ?? GET /api/reports/download/:token ?????????????????????????????????????????
 router.get('/download/:token', async (req, res, next) => {
   try {
     const { token } = req.params;
@@ -560,7 +560,7 @@ router.get('/download/:token', async (req, res, next) => {
       if (cr.rows.length > 0) companyName = cr.rows[0].company;
     } catch(e) {}
 
-    // ── Export Excel ──────────────────────────────────────
+    // ?? Export Excel ??????????????????????????????????????
     if (decoded.type === 'csv') {
       try {
         const summaryData = typeof row.summary === 'string' ? JSON.parse(row.summary) : row.summary;
@@ -591,9 +591,9 @@ router.get('/download/:token', async (req, res, next) => {
           ['INDICATEURS DE VALEUR'],
           ['Temps manuel estime', tempsTotal+' heures'],
           ['Avec DataRemediation', '5 minutes'],
-          ['Cout interne evite', tempsTotal*60+' €'],
-          ['Cout audit DataRemediation', '490 €'],
-          ['Economie potentielle', (tempsTotal*60-490)+' €'],
+          ['Cout interne evite', tempsTotal*60+' ?'],
+          ['Cout audit DataRemediation', '490 ?'],
+          ['Economie potentielle', (tempsTotal*60-490)+' ?'],
         ];
         const wsR = XLSX.utils.aoa_to_sheet(resumeData);
         wsR['!cols'] = [{ wch:35 },{ wch:50 }];
@@ -639,7 +639,7 @@ router.get('/download/:token', async (req, res, next) => {
       }
     }
 
-    // ── Export PDF ────────────────────────────────────────
+    // ?? Export PDF ????????????????????????????????????????
     if (decoded.type === 'pdf') {
       try {
         const summaryData = typeof row.summary === 'string' ? JSON.parse(row.summary) : row.summary;
