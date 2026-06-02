@@ -76,17 +76,19 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
         if (userRes.rows.length > 0) {
           const tenantId = userRes.rows[0].tenant_id;
           await pool.query(
-            `UPDATE users SET
-               abonnement_plan = $1,
-               abonnement_status = $2,
-               abonnement_quota = $3,
-               abonnement_reset_at = $4,
-               stripe_sub_id = $5
-             WHERE tenant_id = $6`,
-            [planId, status, planInfo.quota,
-             new Date(sub.current_period_end * 1000),
-             sub.id, tenantId]
-          );
+  `UPDATE users SET
+     abonnement_plan = $1,
+     abonnement_status = $2,
+     abonnement_quota_audits = $3,
+     abonnement_quota_fournisseurs = $4,
+     abonnement_reset_at = $5,
+     stripe_sub_id = $6
+   WHERE tenant_id = $7`,
+  [planId, status,
+   planInfo.audits, planInfo.fournisseurs,
+   new Date(sub.current_period_end * 1000),
+   sub.id, tenantId]
+);
           await logEvent(tenantId, event.id, event.type, planId, planInfo.quota, null);
           console.log('[Webhook] Abonnement mis a jour pour tenant', tenantId, '- plan', planId);
         }
