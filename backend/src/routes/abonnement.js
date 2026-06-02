@@ -9,10 +9,9 @@ const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 
 // Plans Stripe -> quota fournisseurs
 const PLANS = {
-  'starter':          { quota: 50,   label: 'Starter' },
-  'pme-btp':          { quota: 200,  label: 'PME BTP' },
-  'pme-structuree':   { quota: 500,  label: 'PME Structuree' },
-  'cabinet-comptable':{ quota: 99999,label: 'Cabinet Comptable' },
+  'essentiel': { audits: 10,   fournisseurs: 50,   label: 'Essentiel' },
+  'pro':       { audits: 30,   fournisseurs: 200,  label: 'Pro' },
+  'cabinet':   { audits: 9999, fournisseurs: 500,  label: 'Cabinet' },
 };
 
 // ── GET /api/abonnement — Statut abonnement ───────────────
