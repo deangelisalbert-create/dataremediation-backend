@@ -86,3 +86,22 @@ async function queryWithTenant(tenantId, text, params = []) {
 }
 
 module.exports = { pool, testConnection, queryWithTenant };
+// ── Table client_dossiers ────────────────────────────
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS client_dossiers (
+    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id  TEXT NOT NULL,
+    nom        TEXT NOT NULL,
+    siret      TEXT,
+    contact    TEXT,
+    email      TEXT,
+    notes      TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+  );
+`);
+// ── audit_files : colonne dossier_id ────────────────
+await pool.query(`
+  ALTER TABLE audit_files
+  ADD COLUMN IF NOT EXISTS dossier_id UUID REFERENCES client_dossiers(id) ON DELETE SET NULL;
+`);
