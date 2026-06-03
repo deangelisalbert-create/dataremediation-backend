@@ -38,7 +38,7 @@ async function runMigrations() {
       ADD COLUMN IF NOT EXISTS plan TEXT DEFAULT 'basic';
     `);
 
-    // ── Users : colonnes credits et abonnement ───────────
+    // ── Users : colonnes credits et abonnement ancien ────
     await pool.query(`
       ALTER TABLE users
       ADD COLUMN IF NOT EXISTS credits INTEGER DEFAULT 0,
@@ -69,7 +69,7 @@ async function runMigrations() {
       ADD COLUMN IF NOT EXISTS user_id UUID;
     `);
 
-    // ── Audit files : colonne paid ───────────────────────
+    // ── Audit files : colonnes supplementaires ───────────
     await pool.query(`
       ALTER TABLE audit_files
       ADD COLUMN IF NOT EXISTS paid BOOLEAN DEFAULT false;
@@ -88,6 +88,19 @@ async function runMigrations() {
         created_at TIMESTAMPTZ DEFAULT NOW(),
         updated_at TIMESTAMPTZ DEFAULT NOW()
       );
+    `);
+
+    // ── client_dossiers : colonnes abonnement ────────────
+    await pool.query(`
+      ALTER TABLE client_dossiers
+      ADD COLUMN IF NOT EXISTS abonnement_plan TEXT DEFAULT NULL,
+      ADD COLUMN IF NOT EXISTS abonnement_status TEXT DEFAULT 'inactive',
+      ADD COLUMN IF NOT EXISTS abonnement_quota_audits INTEGER DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS abonnement_audits_used INTEGER DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS abonnement_quota_fournisseurs INTEGER DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS abonnement_reset_at TIMESTAMPTZ DEFAULT NULL,
+      ADD COLUMN IF NOT EXISTS stripe_customer_id TEXT DEFAULT NULL,
+      ADD COLUMN IF NOT EXISTS stripe_sub_id TEXT DEFAULT NULL;
     `);
 
     // ── Table abonnement_events ──────────────────────────
