@@ -41,7 +41,7 @@ app.use(cors({
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Tenant-ID', 'X-Nb-Fournisseurs']
+ allowedHeaders: ['Content-Type', 'Authorization', 'X-Tenant-ID', 'X-Nb-Fournisseurs', 'X-Dossier-Id']
 }));
 
 // ── Webhook Stripe — DOIT ETRE AVANT express.json() ──────
