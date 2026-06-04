@@ -27,7 +27,6 @@ const C = {
   purple:  rgb(139/255, 92/255, 246/255),
 };
 
-// Categories de depenses a exclure du score principal
 const CATEGORIES_DEPENSES = [
   'transport', 'taxi', 'peage', 'hotel', 'restaurant', 'parking',
   'repas', 'carburant', 'frais', 'autre', 'divers', 'note de frais',
@@ -121,7 +120,6 @@ async function generatePDF(summaryData, fileName, companyName) {
   const bloquants = summary.bloquants  || results.filter(r=>(r.statut||'').includes('Bloquant')).length;
   const taux      = summary.taux       || (total > 0 ? Math.round(conformes/total*100) : 0);
 
-  // Separation fournisseurs reels vs categories de depenses
   const categoriesDepenses = results.filter(r => isCategorieDep(r.nom_reel || aliasMap[r.alias] || r.alias));
   const vraisFournisseurs  = results.filter(r => !isCategorieDep(r.nom_reel || aliasMap[r.alias] || r.alias));
   const totalReels         = vraisFournisseurs.length;
@@ -129,12 +127,10 @@ async function generatePDF(summaryData, fileName, companyName) {
   const bloquantsReels     = vraisFournisseurs.filter(r=>(r.statut||'').includes('Bloquant')).length;
   const tauxReels          = totalReels > 0 ? Math.round(conformesReels/totalReels*100) : 0;
 
-  // Scores par categorie
   const tauxSiret = total > 0 ? Math.round(results.filter(r=>r.siret_ok).length/total*100) : 0;
   const tauxTva   = total > 0 ? Math.round(results.filter(r=>r.tva_ok).length/total*100) : 0;
   const tauxSiren = total > 0 ? Math.round(results.filter(r=>r.siren_coherent).length/total*100) : 0;
 
-  // Doublons
   const sirenMap = {};
   results.forEach(r => {
     const siret = String(r.siret||'').replace(/\s/g,'');
@@ -147,13 +143,11 @@ async function generatePDF(summaryData, fileName, companyName) {
   const doublons = Object.values(sirenMap).filter(g=>g.length>1).length;
   const tauxDbl  = total > 0 ? Math.round((1-doublons/total)*100) : 100;
 
-  // Matrice de criticite
   const critiques = results.filter(r=>(r.statut||'').includes('Bloquant') && !r.siret_ok && !r.tva_ok).length;
   const elevees   = results.filter(r=>(r.statut||'').includes('Bloquant') && (r.siret_ok || r.tva_ok)).length;
   const moyennes  = results.filter(r=>(r.statut||'').includes('corriger')).length;
   const faibles   = results.filter(r=>(r.statut||'').includes('Conforme') && !r.siren_coherent).length;
 
-  // Remediation automatique estimee
   const siretRetrouvables = Math.round(bloquantsReels * 0.42);
   const tvaRetrouvables   = Math.round(corriger * 0.85);
   const doublonsFusion    = doublons;
@@ -162,12 +156,9 @@ async function generatePDF(summaryData, fileName, companyName) {
     ? Math.round((totalAutoCorr / (bloquants + corriger)) * 100)
     : 0;
 
-  // Priorite business
   const actionImmediate  = bloquantsReels;
   const action30j        = corriger + Math.round(bloquantsReels * 0.3);
-  const surveillance     = conformesReels - Math.round(conformesReels * 0.9);
 
-  // ROI
   const TEMPS_TOT  = 3 + 2 + 1 + Math.round((bloquants+corriger)*0.1);
   const TAUX_H     = 60;
   const coutManuel = TEMPS_TOT * TAUX_H;
@@ -180,19 +171,14 @@ async function generatePDF(summaryData, fileName, companyName) {
   const niveauLabel = taux >= 92 ? 'FAIBLE' : taux >= 75 ? 'MODERE' : taux >= 50 ? 'ELEVE' : 'CRITIQUE';
   const niveauColor = taux >= 92 ? C.accent : taux >= 75 ? C.warn : C.danger;
   const readyLabel  = taux >= 90 ? 'OK - PRET' : taux >= 75 ? 'PARTIELLEMENT PRET' : 'X NON PRET';
-
-  // Score financier risque
   const risqueFinLabel = bloquants > 40 ? 'CRITIQUE' : bloquants > 20 ? 'ELEVE' : bloquants > 5 ? 'MOYEN' : 'FAIBLE';
   const risqueFinColor = bloquants > 40 ? C.danger : bloquants > 20 ? C.warn : bloquants > 5 ? hexToRgb('#ffb340') : C.accent;
 
   const W = 595, H = 842, TP = 5;
 
-  // 
-  // PAGE 1 - SYNTHESE DIRIGEANT
-  // 
+  // PAGE 1
   const p1 = pdfDoc.addPage([W, H]);
   drawPageHeader(p1, hB, h, logoImage, 'SYNTHESE DIRIGEANT', 1, TP, W, H);
-
   let y = H - 75;
   p1.drawText('RAPPORT DE CONFORMITE e-INVOICING 2026', { x:30, y, size:15, font:hB, color:C.white });
   y -= 16;
@@ -200,34 +186,24 @@ async function generatePDF(summaryData, fileName, companyName) {
   y -= 12;
   p1.drawText('Entreprise : ' + t(companyName||'N/A',40) + '   Date : ' + new Date().toLocaleDateString('fr-FR',{day:'2-digit',month:'long',year:'numeric'}), { x:30, y, size:7.5, font:h, color:C.muted });
   y -= 22;
-
-  // Bloc score + risque + temps
   p1.drawRectangle({ x:20, y:y-92, width:W-40, height:96, color:C.surface });
   p1.drawRectangle({ x:20, y:y+2, width:W-40, height:3, color:scoreColor });
-
   p1.drawText('SCORE CONFORMITE', { x:36, y:y-14, size:7, font:hB, color:C.muted });
   p1.drawText(taux+'%', { x:36, y:y-54, size:40, font:hB, color:scoreColor });
   p1.drawText(scoreLabel, { x:36, y:y-68, size:9, font:hB, color:scoreColor });
-
   p1.drawRectangle({ x:155, y:y-84, width:1, height:82, color:C.muted, opacity:0.3 });
-
   p1.drawText('RISQUE OPERATIONNEL', { x:165, y:y-14, size:7, font:hB, color:C.muted });
   p1.drawText(bloquants + ' fournisseurs a risque de rejet', { x:165, y:y-28, size:7.5, font:h, color:C.text });
   p1.drawText(Math.round((bloquants/Math.max(total,1))*100) + '% du referentiel non conforme', { x:165, y:y-40, size:7.5, font:h, color:C.warn });
   p1.drawText('Niveau : ' + niveauLabel, { x:165, y:y-54, size:8, font:hB, color:niveauColor });
   p1.drawText('Score financier risque : ' + risqueFinLabel, { x:165, y:y-68, size:7.5, font:hB, color:risqueFinColor });
-
   p1.drawRectangle({ x:375, y:y-84, width:1, height:82, color:C.muted, opacity:0.3 });
-
   p1.drawText('TEMPS ECONOMISE', { x:385, y:y-14, size:7, font:hB, color:C.muted });
   p1.drawText('Manuel estime : ' + TEMPS_TOT + ' heures', { x:385, y:y-28, size:7.5, font:h, color:C.warn });
   p1.drawText('DataRemediation : 5 minutes', { x:385, y:y-40, size:7.5, font:h, color:C.accent });
   p1.drawText('Gain : ~' + coutManuel + ' EUR evites', { x:385, y:y-54, size:7.5, font:hB, color:C.accent });
   p1.drawText('Remediation auto : ' + tauxAutoCorr + '%', { x:385, y:y-68, size:7.5, font:hB, color:C.blue });
-
   y -= 106;
-
-  // Note exclusion categories
   if (categoriesDepenses.length > 0) {
     p1.drawRectangle({ x:20, y:y-28, width:W-40, height:30, color:C.card });
     p1.drawRectangle({ x:20, y:y-28, width:3, height:30, color:C.blue });
@@ -235,10 +211,7 @@ async function generatePDF(summaryData, fileName, companyName) {
     p1.drawText('Ces entrees sont exclues du score principal. Score fournisseurs reels : ' + tauxReels + '% (' + totalReels + ' fournisseurs)', { x:28, y:y-23, size:7, font:h, color:C.muted });
     y -= 38;
   }
-
   y -= 4;
-
-  // 4 KPIs
   const kpis = [
     { label:'TOTAL',      value:total,     color:'#3d8eff' },
     { label:'CONFORMES',  value:conformes, color:'#00e5a0' },
@@ -255,13 +228,10 @@ async function generatePDF(summaryData, fileName, companyName) {
     p1.drawText(String(k.value), { x:kx+8, y:y-48, size:26, font:hB, color:kC });
   });
   y -= 82;
-
-  // Matrice de criticite
   y -= 12;
   p1.drawRectangle({ x:20, y:y-74, width:W-40, height:78, color:C.surface });
   p1.drawRectangle({ x:20, y:y+2, width:W-40, height:3, color:C.danger });
   p1.drawText('MATRICE DE CRITICITE', { x:30, y:y-14, size:8, font:hB, color:C.danger });
-
   const matrix = [
     { label:'Critique (SIRET + TVA absents)', nb:critiques, color:C.danger  },
     { label:'Elevee (un identifiant manquant)', nb:elevees, color:C.warn    },
@@ -279,8 +249,6 @@ async function generatePDF(summaryData, fileName, companyName) {
     p1.drawText(t(m.label, 22), { x:mx, y:y-62, size:6, font:h, color:C.muted });
   });
   y -= 86;
-
-  // Indice preparation
   y -= 10;
   p1.drawRectangle({ x:20, y:y-62, width:W-40, height:66, color:C.surface });
   p1.drawRectangle({ x:20, y:y+2, width:W-40, height:3, color:C.blue });
@@ -299,17 +267,13 @@ async function generatePDF(summaryData, fileName, companyName) {
   });
   p1.drawText(readyLabel, { x:440, y:y-40, size:10, font:hB, color:niveauColor });
 
-  // 
-  // PAGE 2 - ANALYSE + ROI
-  // 
+  // PAGE 2
   const p2 = pdfDoc.addPage([W, H]);
   drawPageHeader(p2, hB, h, logoImage, 'ANALYSE DETAILLEE', 2, TP, W, H);
-
   y = H - 75;
   p2.drawText('SCORE PAR CATEGORIE', { x:30, y, size:11, font:hB, color:C.white });
   p2.drawText('Ou agir en priorite', { x:30, y:y-14, size:8, font:h, color:C.muted });
   y -= 26;
-
   [
     { label:'SIRET / SIREN',         value:tauxSiret, color:tauxSiret>=80?C.accent:tauxSiret>=50?C.warn:C.danger, desc:tauxSiret<80?'Action prioritaire':'Satisfaisant' },
     { label:'TVA Intracommunautaire',value:tauxTva,   color:tauxTva>=80?C.accent:tauxTva>=50?C.warn:C.danger,    desc:tauxTva<80?'A verifier':'Satisfaisant' },
@@ -327,13 +291,10 @@ async function generatePDF(summaryData, fileName, companyName) {
     p2.drawRectangle({ x:160, y:cy-28, width:Math.min(barW*(cat.value/100),barW), height:7, color:cat.color });
   });
   y -= 4*50 + 20;
-
-  // Priorite business
   y -= 12;
   p2.drawRectangle({ x:20, y:y-74, width:W-40, height:78, color:C.surface });
   p2.drawRectangle({ x:20, y:y+2, width:W-40, height:3, color:C.purple });
   p2.drawText('PRIORITE BUSINESS', { x:30, y:y-14, size:8, font:hB, color:C.purple });
-
   const prioData = [
     { label:'Correction immediate', nb:actionImmediate, color:C.danger, desc:'Fournisseurs bloquants reels' },
     { label:'Correction sous 30j',  nb:action30j,       color:C.warn,  desc:'A corriger + recup. partielle' },
@@ -347,12 +308,9 @@ async function generatePDF(summaryData, fileName, companyName) {
     p2.drawText(p.desc, { x:px, y:y-63, size:6, font:h, color:C.muted });
   });
   y -= 86;
-
-  // ROI
   y -= 12;
   p2.drawText('ESTIMATION FINANCIERE', { x:30, y, size:11, font:hB, color:C.white });
   y -= 26;
-
   [
     { label:'COUT INTERNE ESTIME',    value:TEMPS_TOT+'h x '+TAUX_H+' EUR/h = '+coutManuel+' EUR', color:'#ffb340', desc:'Traitement manuel' },
     { label:'AUDIT DATAREMEDIATION',  value:coutAudit+' EUR',  color:'#3d8eff', desc:'Tarif audit ponctuel' },
@@ -368,8 +326,6 @@ async function generatePDF(summaryData, fileName, companyName) {
     p2.drawText(b.desc, { x:bx+8, y:y-60, size:6.5, font:h, color:C.muted });
   });
   y -= 86;
-
-  // Benchmark
   y -= 12;
   p2.drawRectangle({ x:20, y:y-60, width:W-40, height:64, color:C.surface });
   p2.drawRectangle({ x:20, y:y+2, width:W-40, height:3, color:C.purple });
@@ -386,45 +342,31 @@ async function generatePDF(summaryData, fileName, companyName) {
   const ecart = taux - scoreMoyen;
   p2.drawText('Ecart vs benchmark : ' + (ecart>=0?'+':'') + ecart + ' points', { x:30, y:y-60, size:7.5, font:hB, color:ecart>=0?C.accent:C.danger });
 
-  // 
-  // PAGE 3 - REMEDIATION AUTOMATIQUE
-  // 
+  // PAGE 3
   const p3 = pdfDoc.addPage([W, H]);
   drawPageHeader(p3, hB, h, logoImage, 'REMEDIATION AUTOMATIQUE', 3, TP, W, H);
-
   y = H - 75;
   p3.drawText('CORRECTIONS AUTOMATIQUES POSSIBLES', { x:30, y, size:13, font:hB, color:C.white });
   p3.drawText('Estimation basee sur les donnees analysees', { x:30, y:y-16, size:8, font:h, color:C.muted });
   y -= 32;
-
-  // Score remediation
   p3.drawRectangle({ x:20, y:y-80, width:W-40, height:84, color:C.surface });
   p3.drawRectangle({ x:20, y:y+2, width:W-40, height:3, color:C.accent });
-
-  // Jauge taux auto-correction
   p3.drawText('TAUX DE CORRECTION AUTOMATIQUE', { x:36, y:y-16, size:7, font:hB, color:C.muted });
   p3.drawText(tauxAutoCorr+'%', { x:36, y:y-56, size:44, font:hB, color:C.accent });
   p3.drawText('des anomalies corrigeables automatiquement', { x:36, y:y-70, size:8, font:h, color:C.muted });
-
-  // Mini barre
   const barAuto = W - 300;
   p3.drawRectangle({ x:320, y:y-40, width:barAuto, height:16, color:C.card });
   p3.drawRectangle({ x:320, y:y-40, width:Math.min(barAuto*(tauxAutoCorr/100),barAuto), height:16, color:C.accent });
   p3.drawText(tauxAutoCorr+'%', { x:320+barAuto+6, y:y-36, size:9, font:hB, color:C.accent });
-
   y -= 96;
-
-  // Tableau corrections
   p3.drawText('DETAIL DES CORRECTIONS POSSIBLES', { x:30, y, size:10, font:hB, color:C.white });
   y -= 22;
-
   p3.drawRectangle({ x:20, y:y-16, width:W-40, height:18, color:C.surface });
   p3.drawRectangle({ x:20, y:y, width:W-40, height:2, color:C.accent });
   p3.drawText('TYPE DE CORRECTION', { x:30, y:y-11, size:7, font:hB, color:C.muted });
   p3.drawText('QUANTITE', { x:300, y:y-11, size:7, font:hB, color:C.muted });
   p3.drawText('METHODE', { x:380, y:y-11, size:7, font:hB, color:C.muted });
   y -= 20;
-
   [
     { label:'SIRET retrouvables via INSEE',    nb:siretRetrouvables, color:C.accent, method:'API INSEE / data.gouv.fr' },
     { label:'TVA retrouvables via VIES EU',   nb:tvaRetrouvables,   color:C.blue,   method:'API VIES Europa' },
@@ -435,15 +377,12 @@ async function generatePDF(summaryData, fileName, companyName) {
     p3.drawRectangle({ x:20, y:y-18, width:W-40, height:20, color:isTotal?C.surface:i%2===0?C.surface:C.card });
     if (isTotal) p3.drawRectangle({ x:20, y:y, width:W-40, height:2, color:C.accent });
     p3.drawRectangle({ x:20, y:y-18, width:3, height:20, color:row.color });
-    p3.drawText(row.label, { x:28, y:y-11, size:isTotal?8:7.5, font:isTotal?hB:h, color:isTotal?C.text:C.text });
+    p3.drawText(row.label, { x:28, y:y-11, size:isTotal?8:7.5, font:isTotal?hB:h, color:C.text });
     p3.drawText(String(row.nb), { x:300, y:y-11, size:isTotal?10:8, font:hB, color:row.color });
     p3.drawText(row.method, { x:380, y:y-11, size:7, font:h, color:C.muted });
     y -= isTotal?24:18;
   });
-
   y -= 20;
-
-  // Argument premium
   p3.drawRectangle({ x:20, y:y-70, width:W-40, height:74, color:C.card });
   p3.drawRectangle({ x:20, y:y+2, width:W-40, height:3, color:C.accent });
   p3.drawRectangle({ x:20, y:y-70, width:3, height:74, color:C.accent });
@@ -451,22 +390,17 @@ async function generatePDF(summaryData, fileName, companyName) {
   p3.drawText('DataRemediation peut corriger automatiquement ' + totalAutoCorr + ' anomalies sur ' + (bloquants+corriger) + ' detectees.', { x:30, y:y-30, size:8, font:h, color:C.text });
   p3.drawText('Cela represente ' + tauxAutoCorr + '% de remediation automatique sans intervention manuelle.', { x:30, y:y-42, size:8, font:h, color:C.text });
   p3.drawText('Audit seul : 490 EUR   |   Audit + Remediation : 790 EUR   |   Gain supplementaire : ~' + Math.round(totalAutoCorr*0.5*TAUX_H) + ' EUR', { x:30, y:y-58, size:8, font:hB, color:C.accent });
-
   y -= 86;
-
-  // Plan d'action 30 jours
   y -= 10;
   p3.drawText('PLAN D\'ACTION 30 JOURS', { x:30, y, size:11, font:hB, color:C.white });
   p3.drawText('Feuille de route pour atteindre 90% de conformite', { x:30, y:y-14, size:8, font:h, color:C.muted });
   y -= 28;
-
   const plan = [
     { sem:'SEMAINE 1', titre:'Corrections critiques', desc:'Traiter les ' + critiques + ' fournisseurs sans SIRET ni TVA. Contacter directement ou supprimer si inactifs.', color:C.danger },
     { sem:'SEMAINE 2', titre:'Validation TVA manquantes', desc:'Completer les ' + (corriger+elevees) + ' TVA manquantes via le portail VIES. Verifier la coherence SIREN.', color:C.warn },
     { sem:'SEMAINE 3', titre:'Fusion des doublons', desc:'Identifier et fusionner les ' + doublons + ' doublons detectes. Nettoyer le referentiel.', color:C.blue },
     { sem:'SEMAINE 4', titre:'Controle final et validation', desc:'Relancer un audit DataRemediation pour valider les corrections. Objectif : score > 90%.', color:C.accent },
   ];
-
   plan.forEach((step, i) => {
     const sx = 20 + (i%2) * ((W-50)/2 + 6);
     const sy = y - Math.floor(i/2) * 80;
@@ -479,21 +413,16 @@ async function generatePDF(summaryData, fileName, companyName) {
     p3.drawText(t(step.desc.slice(55)||'', 55), { x:sx+10, y:sy-53, size:7, font:h, color:C.muted });
   });
 
-  // 
-  // PAGE 4 - TOP 10 + ANOMALIES
-  // 
+  // PAGE 4
   const p4 = pdfDoc.addPage([W, H]);
   drawPageHeader(p4, hB, h, logoImage, 'PLAN DE REMEDIATION', 4, TP, W, H);
-
   y = H - 75;
   p4.drawText('TOP 10 - FOURNISSEURS A TRAITER EN PRIORITE', { x:30, y, size:11, font:hB, color:C.white });
   p4.drawText('Classement par niveau d\'urgence (categories de depenses exclues)', { x:30, y:y-14, size:8, font:h, color:C.muted });
   y -= 26;
-
   const prior = vraisFournisseurs
     .filter(r=>(r.statut||'').includes('Bloquant')||(r.statut||'').includes('corriger'))
     .slice(0,10);
-
   p4.drawRectangle({ x:20, y:y-16, width:W-40, height:18, color:C.surface });
   p4.drawRectangle({ x:20, y:y, width:W-40, height:2, color:C.accent });
   p4.drawText('#',           { x:26,  y:y-11, size:6.5, font:hB, color:C.muted });
@@ -502,7 +431,6 @@ async function generatePDF(summaryData, fileName, companyName) {
   p4.drawText('PROBLEME',    { x:296, y:y-11, size:6.5, font:hB, color:C.muted });
   p4.drawText('ACTION',      { x:436, y:y-11, size:6.5, font:hB, color:C.muted });
   y -= 20;
-
   prior.forEach((r, i) => {
     const isB  = (r.statut||'').includes('Bloquant');
     const sC   = isB ? C.danger : C.warn;
@@ -518,12 +446,9 @@ async function generatePDF(summaryData, fileName, companyName) {
     p4.drawText(act,  { x:436, y:y-10, size:6.5, font:h, color:C.accent });
     y -= 18;
   });
-
   y -= 16;
-
   const blList = results.filter(r=>(r.statut||'').includes('Bloquant')).slice(0,7);
   const crList = results.filter(r=>(r.statut||'').includes('corriger')).slice(0,4);
-
   if (blList.length > 0 && y > 200) {
     p4.drawRectangle({ x:20, y:y-22, width:W-40, height:24, color:C.surface });
     p4.drawRectangle({ x:20, y:y-22, width:3, height:24, color:C.danger });
@@ -542,7 +467,6 @@ async function generatePDF(summaryData, fileName, companyName) {
       y -= rH + 3;
     });
   }
-
   if (crList.length > 0 && y > 120) {
     y -= 8;
     p4.drawRectangle({ x:20, y:y-22, width:W-40, height:24, color:C.surface });
@@ -563,12 +487,9 @@ async function generatePDF(summaryData, fileName, companyName) {
     });
   }
 
-  // 
-  // PAGE 5 - LISTE COMPLETE
-  // 
+  // PAGE 5
   const p5 = pdfDoc.addPage([W, H]);
   drawPageHeader(p5, hB, h, logoImage, 'LISTE COMPLETE - ' + total + ' FOURNISSEURS', 5, TP, W, H);
-
   y = H - 72;
   p5.drawRectangle({ x:20, y:y-16, width:W-40, height:18, color:C.surface });
   p5.drawRectangle({ x:20, y:y, width:W-40, height:2, color:C.accent });
@@ -580,7 +501,6 @@ async function generatePDF(summaryData, fileName, companyName) {
   p5.drawText('Cat. depense',   { x:385, y:y-11, size:6.5, font:hB, color:C.muted });
   p5.drawText('Recommandation', { x:435, y:y-11, size:6.5, font:hB, color:C.muted });
   y -= 20;
-
   results.slice(0,44).forEach((r, i) => {
     if (y < 44) return;
     const isConf  = (r.statut||'').includes('Conforme');
@@ -588,7 +508,6 @@ async function generatePDF(summaryData, fileName, companyName) {
     const isCat   = isCategorieDep(r.nom_reel||aliasMap[r.alias]||r.alias);
     const sC      = isCat ? C.muted : isConf ? C.accent : isBlock ? C.danger : C.warn;
     const statut  = isConf ? 'Conforme' : isBlock ? 'Bloquant' : 'Corriger';
-
     p5.drawRectangle({ x:20, y:y-14, width:W-40, height:16, color:i%2===0?C.surface:C.card });
     p5.drawRectangle({ x:20, y:y-14, width:2, height:16, color:sC });
     p5.drawText(t(r.nom_reel||aliasMap[r.alias]||r.alias, 28), { x:26,  y:y-9, size:6.5, font:h,  color:isCat?C.muted:C.text });
@@ -600,7 +519,6 @@ async function generatePDF(summaryData, fileName, companyName) {
     p5.drawText(t(r.suggestion||'',22),  { x:435, y:y-9, size:5.5, font:h,  color:C.muted });
     y -= 16;
   });
-
   if (results.length > 44) {
     p5.drawText('... et ' + (results.length-44) + ' autres fournisseurs - voir fichier Excel pour la liste complete', { x:26, y:y+2, size:7, font:h, color:C.muted });
   }
@@ -608,7 +526,7 @@ async function generatePDF(summaryData, fileName, companyName) {
   return Buffer.from(await pdfDoc.save());
 }
 
-//  POST /api/reports/:fileId/link 
+// ── POST /api/reports/:fileId/link ────────────────────────
 router.post('/:fileId/link', authenticate, checkRole(['admin','client']), async (req, res, next) => {
   try {
     const { fileId } = req.params;
@@ -633,7 +551,135 @@ router.post('/:fileId/link', authenticate, checkRole(['admin','client']), async 
   } catch(err) { next(err); }
 });
 
-//  GET /api/reports/download/:token 
+// ── POST /api/reports/:fileId/send ────────────────────────
+// Envoyer le rapport PDF par email au contact du dossier
+router.post('/:fileId/send', authenticate, checkRole(['admin','client']), async (req, res, next) => {
+  try {
+    const { fileId } = req.params;
+    const { email, nom_client } = req.body;
+
+    if (!email) return res.status(400).json({ error: 'Email du destinataire requis.' });
+
+    // Recuperer le rapport
+    const result = await pool.query(
+      `SELECT af.original_name, af.tenant_id, ar.summary, u.company
+       FROM audit_files af
+       LEFT JOIN audit_reports ar ON ar.file_id = af.id
+       LEFT JOIN users u ON u.tenant_id = af.tenant_id
+       WHERE af.id = $1 AND af.tenant_id = $2 AND af.status = 'done'
+       LIMIT 1`,
+      [fileId, req.user.tenant_id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Rapport introuvable ou analyse non terminee.' });
+    }
+
+    const row = result.rows[0];
+    const sd  = typeof row.summary === 'string' ? JSON.parse(row.summary) : row.summary;
+    const taux = sd?.summary?.taux || 0;
+    const total = sd?.summary?.total || sd?.results?.length || 0;
+    const bloquants = sd?.summary?.bloquants || 0;
+    const companyName = row.company || 'DataRemediation';
+    const baseName = row.original_name.replace(/\.[^.]+$/, '');
+
+    // Generer le PDF
+    const pdfBuffer = await generatePDF(sd, row.original_name, companyName);
+    const pdfBase64 = pdfBuffer.toString('base64');
+
+    // Envoyer via Resend
+    const RESEND_API_KEY = process.env.RESEND_API_KEY;
+    if (!RESEND_API_KEY) {
+      return res.status(500).json({ error: 'Service email non configure (RESEND_API_KEY manquant).' });
+    }
+
+    const scoreLabel = taux >= 80 ? 'Conforme' : taux >= 50 ? 'A ameliorer' : 'Critique';
+    const scoreEmoji = taux >= 80 ? '✅' : taux >= 50 ? '⚠️' : '🚨';
+
+    const emailBody = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="font-family: Arial, sans-serif; background: #f5f5f5; margin: 0; padding: 20px;">
+  <div style="max-width: 600px; margin: 0 auto; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+    <div style="background: #06080f; padding: 30px; text-align: center;">
+      <h1 style="color: #00e5a0; margin: 0; font-size: 24px;">DataRemédiation</h1>
+      <p style="color: #8899cc; margin: 8px 0 0; font-size: 14px;">Conformité e-Invoicing 2026</p>
+    </div>
+    <div style="padding: 30px;">
+      <p style="color: #333; font-size: 16px;">Bonjour${nom_client ? ' ' + nom_client : ''},</p>
+      <p style="color: #555; font-size: 14px; line-height: 1.6;">
+        Suite à l'audit de votre base fournisseurs, veuillez trouver ci-joint votre rapport de conformité e-Invoicing 2026.
+      </p>
+      <div style="background: #f8f9fa; border-left: 4px solid #00e5a0; padding: 20px; margin: 20px 0; border-radius: 4px;">
+        <div style="font-size: 32px; font-weight: bold; color: ${taux >= 80 ? '#00e5a0' : taux >= 50 ? '#ffb340' : '#ff4566'};">
+          ${scoreEmoji} ${taux}% — ${scoreLabel}
+        </div>
+        <div style="color: #666; margin-top: 8px; font-size: 14px;">
+          ${total} fournisseurs analysés · ${bloquants} fournisseurs bloquants identifiés
+        </div>
+      </div>
+      <p style="color: #555; font-size: 14px; line-height: 1.6;">
+        Le rapport PDF complet (5 pages) est joint à cet email. Il contient :
+      </p>
+      <ul style="color: #555; font-size: 14px; line-height: 2;">
+        <li>Synthèse dirigeant avec score et niveau de risque</li>
+        <li>Analyse détaillée par catégorie</li>
+        <li>Plan d'action 30 jours</li>
+        <li>Liste complète des fournisseurs</li>
+      </ul>
+      <p style="color: #555; font-size: 14px; line-height: 1.6;">
+        Pour toute question, n'hésitez pas à nous contacter.
+      </p>
+      <p style="color: #333; font-size: 14px; margin-top: 30px;">
+        Cordialement,<br>
+        <strong>L'équipe DataRemédiation</strong><br>
+        <span style="color: #00e5a0;">contact@dataremediation.fr</span>
+      </p>
+    </div>
+    <div style="background: #06080f; padding: 20px; text-align: center;">
+      <p style="color: #4a5878; font-size: 12px; margin: 0;">
+        DataRemédiation · Conformité e-Invoicing 2026 · Confidentiel
+      </p>
+    </div>
+  </div>
+</body>
+</html>`;
+
+    const resendRes = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${RESEND_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: 'DataRemédiation <contact@dataremediation.fr>',
+        to: [email],
+        subject: `Rapport de conformité fournisseurs — Score ${taux}% — ${new Date().toLocaleDateString('fr-FR')}`,
+        html: emailBody,
+        attachments: [
+          {
+            filename: `rapport_conformite_${baseName}.pdf`,
+            content: pdfBase64,
+          }
+        ],
+      }),
+    });
+
+    const resendData = await resendRes.json().catch(() => ({}));
+
+    if (!resendRes.ok) {
+      console.error('[Reports] Erreur Resend:', resendData);
+      return res.status(500).json({ error: 'Erreur envoi email: ' + (resendData.message || resendRes.status) });
+    }
+
+    safeLog('info', 'REPORT_SENT', { userId: req.user.id, tenantId: req.user.tenant_id, to: email });
+    res.json({ success: true, message: `Rapport envoye a ${email}` });
+
+  } catch(err) { next(err); }
+});
+
+// ── GET /api/reports/download/:token ─────────────────────
 router.get('/download/:token', async (req, res, next) => {
   try {
     let decoded;
@@ -668,7 +714,6 @@ router.get('/download/:token', async (req, res, next) => {
         const tT = 3+2+1+Math.round((bl+cr2)*0.1);
         const catDep = results.filter(r=>isCategorieDep(r.nom_reel||aliasMap[r.alias]||r.alias));
         const vrais  = results.filter(r=>!isCategorieDep(r.nom_reel||aliasMap[r.alias]||r.alias));
-
         const resumeData = [
           ['RAPPORT DE CONFORMITE e-INVOICING 2026'],['DataRemediation - Confidentiel'],[],
           ['Fichier', row.original_name],['Entreprise', companyName],['Date', new Date().toLocaleDateString('fr-FR')],[],
@@ -685,18 +730,15 @@ router.get('/download/:token', async (req, res, next) => {
         const wsR = XLSX.utils.aoa_to_sheet(resumeData);
         wsR['!cols'] = [{wch:35},{wch:50}];
         XLSX.utils.book_append_sheet(wb, wsR, 'Resume');
-
         const headers = ['Nom fournisseur','Alias','Statut','SIRET valide','TVA valide','SIREN coherent','Cat. depense','Erreurs','Recommandation'];
         const cols    = [{wch:35},{wch:12},{wch:15},{wch:14},{wch:12},{wch:16},{wch:14},{wch:40},{wch:60}];
         const toRow   = r => {
           const nom = r.nom_reel||aliasMap[r.alias]||r.alias;
           return [nom, r.alias, r.statut||'', r.siret_ok?'OUI':'NON', r.tva_ok?'OUI':'NON', r.siren_coherent?'OUI':'NON', isCategorieDep(nom)?'OUI':'NON', (r.erreurs||[]).join(' | '), r.suggestion||''];
         };
-
         const wsD = XLSX.utils.aoa_to_sheet([headers, ...results.map(toRow)]);
         wsD['!cols'] = cols;
         XLSX.utils.book_append_sheet(wb, wsD, 'Tous les fournisseurs');
-
         if (vrais.filter(r=>(r.statut||'').includes('Bloquant')).length > 0) {
           const ws = XLSX.utils.aoa_to_sheet([headers, ...vrais.filter(r=>(r.statut||'').includes('Bloquant')).map(toRow)]);
           ws['!cols'] = cols;
@@ -717,7 +759,6 @@ router.get('/download/:token', async (req, res, next) => {
           ws['!cols'] = cols;
           XLSX.utils.book_append_sheet(wb, ws, 'Conformes');
         }
-
         const buf = XLSX.write(wb, {type:'buffer', bookType:'xlsx'});
         res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
         res.setHeader('Content-Disposition', 'attachment; filename="rapport_' + baseName + '.xlsx"');
