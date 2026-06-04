@@ -680,7 +680,10 @@ reply_to: 'dataremediation.contact@gmail.com',
     safeLog('info', 'REPORT_SENT', { userId: req.user.id, tenantId: req.user.tenant_id, to: email });
     res.json({ success: true, message: `Rapport envoye a ${email}` });
 
-  } catch(err) { next(err); }
+ } catch(err) {
+  console.error('[Send] ERREUR COMPLETE:', err.message, err.stack);
+  res.status(500).json({ error: err.message });
+}
 });
 
 // ── GET /api/reports/download/:token ─────────────────────
