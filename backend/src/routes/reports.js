@@ -548,7 +548,10 @@ router.post('/:fileId/link', authenticate, checkRole(['admin','client']), async 
       expiresAt: new Date(Date.now() + DOWNLOAD_TTL_MIN*60000).toISOString(),
       ttlMinutes: DOWNLOAD_TTL_MIN,
     });
-  } catch(err) { next(err); }
+ } catch(err) {
+    console.error('[Reports/send] Erreur:', err.message, err.stack);
+    next(err);
+  }
 });
 
 // ── POST /api/reports/:fileId/send ────────────────────────
