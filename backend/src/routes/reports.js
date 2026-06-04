@@ -656,7 +656,7 @@ router.post('/:fileId/send', authenticate, checkRole(['admin','client']), async 
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-       from: 'DataRemediation <onboarding@resend.dev>',
+       from: 'DataRemediation <contact@dataremediation.fr>',
 reply_to: 'dataremediation.contact@gmail.com',
         to: [email],
         subject: `Rapport de conformité fournisseurs — Score ${taux}% — ${new Date().toLocaleDateString('fr-FR')}`,
