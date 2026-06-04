@@ -568,7 +568,7 @@ router.post('/:fileId/send', authenticate, checkRole(['admin','client']), async 
       `SELECT af.original_name, af.tenant_id, ar.summary, u.company
        FROM audit_files af
        LEFT JOIN audit_reports ar ON ar.file_id = af.id
-       LEFT JOIN users u ON u.tenant_id = af.tenant_id
+       LEFT JOIN users u ON u.tenant_id::text = af.tenant_id
        WHERE af.id = $1 AND af.tenant_id::text = $2 AND af.status = 'done'
        LIMIT 1`,
       [fileId, req.user.tenant_id]
