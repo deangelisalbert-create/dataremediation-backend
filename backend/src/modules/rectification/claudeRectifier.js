@@ -5,6 +5,9 @@ const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const BATCH_SIZE = 5;
 const DELAY_MS   = 800;
 
+// Statuts qui ne nécessitent aucun traitement IA
+const STATUTS_EXCLUS = new Set(['CATEGORIE_DEPENSE', 'ENSEIGNE_PONCTUELLE']);
+
 async function rectifyWithClaude(validatedRecords) {
   const results = [];
   for (let i = 0; i < validatedRecords.length; i += BATCH_SIZE) {
@@ -20,7 +23,7 @@ async function rectifyWithClaude(validatedRecords) {
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 async function rectifyRecord(record) {
-  // Pas d'anomalies -> valide
+  // ── Cas 1 : Valide — rien à faire
   if (!record.anomalies || record.anomalies.length === 0) {
     return {
       ...record,
@@ -30,19 +33,31 @@ async function rectifyRecord(record) {
     };
   }
 
-  // Collecter les corrections deja faites par INSEE
+  // ── Cas 2 : Catégorie de dépenses ou enseigne ponctuelle — exclu du pipeline IA
+  if (STATUTS_EXCLUS.has(record.statut)) {
+    const anomalie = record.anomalies[0]; // CATEGORIE_DEPENSE ou ENSEIGNE_PONCTUELLE
+    return {
+      ...record,
+      corrections:       [],
+      statut_final:      record.statut, // conserve le statut de classification
+      donnees_corrigees: record.donnees_originales,
+      message_exclusion: anomalie.message,
+    };
+  }
+
+  // ── Cas 3 : Corrections INSEE déjà faites
   const correctionsInsee = [];
   if (record.correction_siret) {
     correctionsInsee.push({
-      champ:            record.correction_siret.champ,
-      avant:            record.correction_siret.valeur_originale,
-      apres:            record.correction_siret.valeur_corrigee,
-      confiance:        '98%',
-      justification:    record.correction_siret.justification,
+      champ:         record.correction_siret.champ,
+      avant:         record.correction_siret.valeur_originale,
+      apres:         record.correction_siret.valeur_corrigee,
+      confiance:     '98%',
+      justification: record.correction_siret.justification,
     });
   }
 
-  // Si plus d'anomalies apres INSEE -> corrige
+  // Si plus d'anomalies après INSEE
   if (record.anomalies.length === 0 && correctionsInsee.length > 0) {
     return {
       ...record,
@@ -52,7 +67,7 @@ async function rectifyRecord(record) {
     };
   }
 
-  // Anomalies restantes -> demander a Claude
+  // ── Cas 4 : Anomalies réelles → IA
   try {
     const correctionsIa = await askClaudeWithRetry(record);
     const allCorrections = [...correctionsInsee, ...correctionsIa];
@@ -65,7 +80,6 @@ async function rectifyRecord(record) {
     };
   } catch(err) {
     console.warn('[ClaudeRectifier] Erreur record', record.index, ':', err.message);
-    // Si on avait des corrections INSEE, les conserver quand meme
     if (correctionsInsee.length > 0) {
       return {
         ...record,
@@ -125,7 +139,6 @@ Si impossible: []`,
   const clean = text.replace(/```json|```/g,'').trim();
   try {
     const parsed = JSON.parse(clean);
-    // Normaliser le format (valeur_originale/valeur_corrigee ou avant/apres)
     return Array.isArray(parsed) ? parsed.map(c => ({
       champ:         c.champ,
       avant:         c.valeur_originale || c.avant || '',
@@ -143,7 +156,6 @@ function applyCorrections(original, corrections) {
   for (const c of corrections) {
     const confVal = parseFloat(String(c.confiance).replace('%','')) || 0;
     if (confVal >= 70 && c.apres) {
-      // Trouver la bonne cle dans l'objet original
       const key = Object.keys(corrige).find(k =>
         k.toLowerCase().replace(/[^a-z]/g,'') === c.champ.toLowerCase().replace(/[^a-z]/g,'')
       ) || c.champ;
