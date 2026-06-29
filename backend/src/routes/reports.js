@@ -540,7 +540,7 @@ async function generatePDF(summaryData, fileName, companyName) {
     p4.drawText(isExcluRow?'—':r.tva_ok?'OUI':'NON',   { x:308, y:y-9, size:6.5, font:hB, color:isExcluRow?C.muted:r.tva_ok?C.accent:C.danger });
     p4.drawText(isExcluRow?'—':r.siren_coherent?'OUI':'NON', { x:340, y:y-9, size:6.5, font:hB, color:isExcluRow?C.muted:r.siren_coherent?C.accent:C.danger });
     p4.drawText(isExcluRow?'OUI':'NON',      { x:385, y:y-9, size:6.5, font:hB, color:isExcluRow?C.blue:C.muted });
-    p4.drawText(t(isExcluRow?(isCat?'Libelle comptable':'Enseigne ponctuelle — exclu'):(r.suggestion||''),22), { x:435, y:y-9, size:5.5, font:h, color:C.muted });
+    p4.drawText(t(isExcluRow?(isCat?'Libelle comptable':'Enseigne ponctuelle'):(r.suggestion||''),30), { x:435, y:y-9, size:5.5, font:h, color:C.muted });
     y -= 16;
     rowCount++;
   });
