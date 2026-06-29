@@ -44,20 +44,24 @@ const ENSEIGNES_PONCTUELLES = [
   'mcdonald', 'mcdo', 'burger king', 'kfc', 'flunch',
 ];
 
-function isCategorieDep(nom) {
+function isCategorieDep(nom, statut) {
+  // Priorité au statut stocké par auditService
+  if (statut === 'CATEGORIE_DEPENSE') return true;
   if (!nom) return false;
   const n = nom.toLowerCase().trim();
   return CATEGORIES_DEPENSES.some(c => n.includes(c));
 }
 
-function isEnseignePonctuelle(nom) {
+function isEnseignePonctuelle(nom, statut) {
+  // Priorité au statut stocké par auditService
+  if (statut === 'ENSEIGNE_PONCTUELLE') return true;
   if (!nom) return false;
   const n = nom.toLowerCase().trim();
   return ENSEIGNES_PONCTUELLES.some(e => n.includes(e));
 }
 
-function isExclu(nom) {
-  return isCategorieDep(nom) || isEnseignePonctuelle(nom);
+function isExclu(nom, statut) {
+  return isCategorieDep(nom, statut) || isEnseignePonctuelle(nom, statut);
 }
 
 function hexToRgb(hex) {
@@ -140,11 +144,11 @@ async function generatePDF(summaryData, fileName, companyName) {
   const bloquants = summary.bloquants  || results.filter(r=>(r.statut||'').includes('Bloquant')).length;
   const taux      = summary.taux       || (total > 0 ? Math.round(conformes/total*100) : 0);
 
-  // Séparation exclus / fournisseurs réels
-  const exclus            = results.filter(r => isExclu(r.nom_reel || aliasMap[r.alias] || r.alias));
-  const vraisFournisseurs = results.filter(r => !isExclu(r.nom_reel || aliasMap[r.alias] || r.alias));
-  const nbCategories      = results.filter(r => isCategorieDep(r.nom_reel || aliasMap[r.alias] || r.alias)).length;
-  const nbPonctuels       = results.filter(r => isEnseignePonctuelle(r.nom_reel || aliasMap[r.alias] || r.alias)).length;
+  // Séparation exclus / fournisseurs réels — priorité au statut stocké
+  const exclus            = results.filter(r => isExclu(r.nom_reel || aliasMap[r.alias] || r.alias, r.statut));
+  const vraisFournisseurs = results.filter(r => !isExclu(r.nom_reel || aliasMap[r.alias] || r.alias, r.statut));
+  const nbCategories      = results.filter(r => isCategorieDep(r.nom_reel || aliasMap[r.alias] || r.alias, r.statut)).length;
+  const nbPonctuels       = results.filter(r => isEnseignePonctuelle(r.nom_reel || aliasMap[r.alias] || r.alias, r.statut)).length;
   const totalReels        = vraisFournisseurs.length;
   const conformesReels    = vraisFournisseurs.filter(r=>(r.statut||'').includes('Conforme')).length;
   const bloquantsReels    = vraisFournisseurs.filter(r=>(r.statut||'').includes('Bloquant')).length;
@@ -523,8 +527,8 @@ async function generatePDF(summaryData, fileName, companyName) {
     const nom     = r.nom_reel||aliasMap[r.alias]||r.alias;
     const isConf  = (r.statut||'').includes('Conforme');
     const isBlock = (r.statut||'').includes('Bloquant');
-    const isCat   = isCategorieDep(nom);
-    const isPonct = isEnseignePonctuelle(nom);
+    const isCat   = isCategorieDep(nom, r.statut);
+    const isPonct = isEnseignePonctuelle(nom, r.statut);
     const isExcluRow = isCat || isPonct;
     const sC      = isExcluRow ? C.muted : isConf ? C.accent : isBlock ? C.danger : C.warn;
     const statut  = isExcluRow ? (isCat ? 'Cat. depense' : 'Ponctuel') : isConf ? 'Conforme' : isBlock ? 'Bloquant' : 'Corriger';
@@ -596,7 +600,7 @@ router.post('/:fileId/send', authenticate, checkRole(['admin','client']), async 
 
     const row = result.rows[0];
     const sd  = typeof row.summary === 'string' ? JSON.parse(row.summary) : row.summary;
-    const vrais = (sd?.results||[]).filter(r => !isExclu(r.nom_reel||sd?.aliasMap?.[r.alias]||r.alias));
+    const vrais = (sd?.results||[]).filter(r => !isExclu(r.nom_reel||sd?.aliasMap?.[r.alias]||r.alias, r.statut));
     const tauxR = vrais.length > 0 ? Math.round(vrais.filter(r=>(r.statut||'').includes('Conforme')).length/vrais.length*100) : 0;
     const totalR = vrais.length;
     const bloquantsR = vrais.filter(r=>(r.statut||'').includes('Bloquant')).length;
@@ -694,9 +698,9 @@ router.get('/download/:token', async (req, res, next) => {
         const summary  = sd?.summary  || {};
         const bl = summary.bloquants||0;
         const cr2 = summary.a_corriger||0;
-        const catDep  = results.filter(r=>isCategorieDep(r.nom_reel||aliasMap[r.alias]||r.alias));
-        const ponct   = results.filter(r=>isEnseignePonctuelle(r.nom_reel||aliasMap[r.alias]||r.alias));
-        const vrais   = results.filter(r=>!isExclu(r.nom_reel||aliasMap[r.alias]||r.alias));
+        const catDep  = results.filter(r=>isCategorieDep(r.nom_reel||aliasMap[r.alias]||r.alias, r.statut));
+        const ponct   = results.filter(r=>isEnseignePonctuelle(r.nom_reel||aliasMap[r.alias]||r.alias, r.statut));
+        const vrais   = results.filter(r=>!isExclu(r.nom_reel||aliasMap[r.alias]||r.alias, r.statut));
         const tauxR2  = vrais.length > 0 ? Math.round(vrais.filter(r=>(r.statut||'').includes('Conforme')).length/vrais.length*100) : 0;
         const TEMPS   = Math.max(1, Math.round((bl+cr2)*8/60*10)/10);
 
@@ -731,7 +735,7 @@ router.get('/download/:token', async (req, res, next) => {
         const cols    = [{wch:35},{wch:12},{wch:15},{wch:14},{wch:12},{wch:16},{wch:14},{wch:40},{wch:60}];
         const toRow   = r => {
           const nom = r.nom_reel||aliasMap[r.alias]||r.alias;
-          const exclu = isExclu(nom);
+          const exclu = isExclu(nom, r.statut);
           return [nom, r.alias, exclu?(isCategorieDep(nom)?'Cat. depense':'Ponctuel'):r.statut||'',
             exclu?'—':r.siret_ok?'OUI':'NON', exclu?'—':r.tva_ok?'OUI':'NON',
             exclu?'—':r.siren_coherent?'OUI':'NON', exclu?'OUI':'NON',
