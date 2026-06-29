@@ -445,12 +445,15 @@ async function generatePDF(summaryData, fileName, companyName) {
       if (y < 80) return;
       const nom = t(r.nom_reel||aliasMap[r.alias]||r.alias, 38);
       const err = t((r.erreurs||[]).join(' - '), 60);
-      const rH  = r.suggestion ? 38 : 24;
+      const sug1 = r.suggestion ? t(r.suggestion, 90) : '';
+      const sug2 = r.suggestion && r.suggestion.length > 90 ? t(r.suggestion.slice(90), 90) : '';
+      const rH  = r.suggestion ? (sug2 ? 50 : 40) : 26;
       p3.drawRectangle({ x:20, y:y-rH, width:W-40, height:rH, color:C.card });
       p3.drawRectangle({ x:20, y:y-rH, width:3,    height:rH, color:C.danger });
       p3.drawText(nom, { x:28, y:y-10, size:8, font:hB, color:C.white });
       p3.drawText(err, { x:28, y:y-20, size:7, font:h,  color:C.muted });
-      if (r.suggestion) p3.drawText('-> ' + t(r.suggestion,80), { x:28, y:y-30, size:7, font:h, color:C.accent });
+      if (sug1) p3.drawText('-> ' + sug1, { x:28, y:y-30, size:7, font:h, color:C.accent });
+      if (sug2) p3.drawText('   ' + sug2, { x:28, y:y-40, size:7, font:h, color:C.accent });
       y -= rH + 3;
     });
   }
@@ -467,12 +470,15 @@ async function generatePDF(summaryData, fileName, companyName) {
       if (y < 80) return;
       const nom = t(r.nom_reel||aliasMap[r.alias]||r.alias, 38);
       const err = t((r.erreurs||[]).join(' - '), 60);
-      const rH  = r.suggestion ? 38 : 24;
+      const sug1 = r.suggestion ? t(r.suggestion, 90) : '';
+      const sug2 = r.suggestion && r.suggestion.length > 90 ? t(r.suggestion.slice(90), 90) : '';
+      const rH  = r.suggestion ? (sug2 ? 50 : 40) : 26;
       p3.drawRectangle({ x:20, y:y-rH, width:W-40, height:rH, color:C.card });
       p3.drawRectangle({ x:20, y:y-rH, width:3,    height:rH, color:C.warn });
       p3.drawText(nom, { x:28, y:y-10, size:8, font:hB, color:C.white });
       p3.drawText(err, { x:28, y:y-20, size:7, font:h,  color:C.muted });
-      if (r.suggestion) p3.drawText('-> ' + t(r.suggestion,80), { x:28, y:y-30, size:7, font:h, color:C.accent });
+      if (sug1) p3.drawText('-> ' + sug1, { x:28, y:y-30, size:7, font:h, color:C.accent });
+      if (sug2) p3.drawText('   ' + sug2, { x:28, y:y-40, size:7, font:h, color:C.accent });
       y -= rH + 3;
     });
   }
