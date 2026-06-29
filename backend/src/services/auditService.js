@@ -98,16 +98,23 @@ RÈGLES DE VALIDATION :
 - Doublon : même SIREN sous deux alias différents
 - Si siret/siren contient du texte non numérique → invalide
 
-STATUTS :
-- "Conforme" : SIREN ou SIRET valide (9 ou 14 chiffres) ET TVA valide ET cohérence OK
-- "A corriger" : SIREN valide (9 chiffres) mais SIRET incomplet OU TVA manquante/incorrecte
-- "Bloquant" : données absentes ou texte non numérique
+STATUTS - REGLES STRICTES :
+- "Conforme" : identifiant NUMERIQUE present (9 OU 14 chiffres) ET TVA valide ET coherence OK. SIREN 9 chiffres + TVA valide = Conforme. Ne JAMAIS mettre A corriger si TVA valide.
+- "A corriger" : identifiant numerique present (9 ou 14 chiffres) MAIS TVA absente ou invalide UNIQUEMENT.
+- "Bloquant" : SEULEMENT si identifiant totalement absent OU contient du texte non numerique. SIREN ou SIRET numerique present = jamais Bloquant.
+
+EXEMPLES A SUIVRE ABSOLUMENT :
+- siret="880265921" (9 chiffres), tva="FR12880265921" -> statut="Conforme", siret_ok=true, tva_ok=true
+- siret="880265921" (9 chiffres), tva="" -> statut="A corriger", siret_ok=true, tva_ok=false
+- siret="88026592100011" (14 chiffres), tva="FR12880265921" -> statut="Conforme", siret_ok=true
+- siret="" ET tva="" -> statut="Bloquant", siret_ok=false
+- siret="TRANSPORT" -> statut="Bloquant", siret_ok=false
 
 RECOMMANDATIONS OBLIGATOIRES :
-- Si statut "Conforme" avec SIREN 9 chiffres : suggestion = "Conforme 2024. Pour e-Invoicing 2026 : compléter en SIRET 14 chiffres (ajouter le code NIC 5 chiffres)"
-- Si statut "Conforme" avec SIRET 14 chiffres : suggestion = "Conforme e-Invoicing 2026"
-- Si statut "A corriger" : expliquer ce qui manque
-- Si statut "Bloquant" : expliquer le problème et comment le corriger
+- Conforme SIREN 9 chiffres : "Conforme 2024. Pour e-Invoicing 2026 : completer en SIRET 14 chiffres"
+- Conforme SIRET 14 chiffres : "Conforme e-Invoicing 2026"
+- A corriger TVA manquante : indiquer le SIREN present et demander TVA format FR + 2 car. + 9 chiffres
+- Bloquant : expliquer le probleme et comment corriger
 
 Réponds UNIQUEMENT avec un objet JSON valide, sans markdown, sans texte avant ou après :
 {
