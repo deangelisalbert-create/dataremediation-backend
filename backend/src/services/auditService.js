@@ -9,15 +9,94 @@ const { generateFullReport } = require('./reportGenerator');
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
+// ── Listes d'exclusion ────────────────────────────────────
+
+const CATEGORIES_DEPENSES = new Set([
+  'transport', 'frais kilometriques', 'fraiskilometriques', 'frais_kilometriques',
+  'peage', 'péage', 'hotel', 'hôtel', 'hotels', 'hôtels',
+  'taxi', 'vtc', 'parking', 'restaurants', 'restaurant',
+  'repas', 'carburant', 'essence', 'gazole', 'gasoil',
+  'autre', 'autres', 'divers', 'frais generaux', 'frais généraux',
+  'note de frais', 'notedefrais', 'carte bancaire', 'cartebancaire',
+  'abonnement', 'fournitures', 'telecom', 'telephone',
+  'fournisseurs - achats de biens et pres', 'fournisseurs - achats de biens',
+  'fournisseurs', 'achats de biens', 'achats',
+  'bulletin', 'salaire', 'bulletins de salaire',
+  'airbnb', 'booking', 'easyjet', 'easy-jet',
+  'kilometrique', 'kilometriques',
+]);
+
+const ENSEIGNES_PONCTUELLES = new Set([
+  'leroy merlin', 'leroymerlin', 'castorama', 'brico depot', 'bricodepot',
+  'point p', 'pointp', 'mr bricolage', 'mrbricolage', 'weldom',
+  'chausson materiaux', 'plateforme du batiment',
+  'intermarche', 'intermarché', 'leclerc', 'carrefour', 'auchan', 'lidl',
+  'aldi', 'super u', 'superu', 'casino', 'monoprix', 'franprix', 'cora',
+  'metro', 'promocash',
+  'mcdonald', 'mcdo', 'burger king', 'burgerking', 'kfc', 'subway',
+  'flunch', 'buffalo grill', 'hippopotamus', 'courtepaille', 'paul',
+  'boucherie', 'epicerie',
+  'total', 'totalenergies', 'total energies', 'bp', 'shell', 'esso',
+  'amazon', 'fnac', 'darty', 'boulanger', 'ikea', 'conforama',
+]);
+
+// Libellés comptables dans le champ SIRET
+const LIBELLES_SIRET = new Set([
+  'transport', 'peage', 'péage', 'hotel', 'hôtel', 'parking',
+  'restaurant', 'restaurants', 'taxi', 'carburant', 'autre', 'autres',
+  'frais', 'frais_kilometriques', 'fraiskilometriques',
+  'note_de_frais', 'notedefrais', 'cartebancaire', 'carte_bancaire',
+  'divers', 'fournitures', 'abonnement',
+]);
+
+function normalizeName(name) {
+  if (!name) return '';
+  return String(name)
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9 ]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isCategorieDep(nom) {
+  const n = normalizeName(nom);
+  if (CATEGORIES_DEPENSES.has(n)) return true;
+  for (const c of CATEGORIES_DEPENSES) {
+    if (n === c || n.startsWith(c + ' ')) return true;
+  }
+  return false;
+}
+
+function isEnseignePonctuelle(nom) {
+  const n = normalizeName(nom);
+  for (const e of ENSEIGNES_PONCTUELLES) {
+    if (n === e || n.startsWith(e)) return true;
+  }
+  return false;
+}
+
+function isLibelleComptable(siret) {
+  if (!siret) return false;
+  const n = normalizeName(siret);
+  if (/[a-z_]/.test(n.replace(/ /g, ''))) {
+    return LIBELLES_SIRET.has(n) || /[a-zA-Z_]{3,}/.test(siret);
+  }
+  return false;
+}
+
+// ─────────────────────────────────────────────────────────
+
 const SYSTEM_PROMPT = `Tu es un Expert Conformité e-Invoicing France 2026.
 Tu reçois des données fournisseurs PSEUDONYMISÉES (alias FOURN_XXX — jamais de vrais noms).
+Ces fournisseurs sont des fournisseurs réels (catégories comptables et enseignes ponctuelles déjà exclues en amont).
 
 RÈGLES DE VALIDATION :
 - SIREN/SIRET : accepter 9 chiffres numériques (SIREN) OU 14 chiffres numériques (SIRET complet)
 - TVA FR : format "FR" + 2 caractères alphanumériques + 9 chiffres. Ex: FR83352600820
 - Cohérence SIREN : le SIREN (9 chiffres) doit correspondre aux 9 derniers chiffres de la TVA
 - Doublon : même SIREN sous deux alias différents
-- Si siret/siren contient du texte non numérique (ex: "TRANSPORT", "HOTEL") → invalide
+- Si siret/siren contient du texte non numérique → invalide
 
 STATUTS :
 - "Conforme" : SIREN ou SIRET valide (9 ou 14 chiffres) ET TVA valide ET cohérence OK
@@ -98,6 +177,53 @@ function pseudonymize(rows) {
   return { pseudoRows, aliasMap };
 }
 
+// ── Classification des exclus AVANT Claude ────────────────
+function classifyExclus(pseudoRows, aliasMap) {
+  const aAnalyser = [];
+  const exclus    = [];
+
+  for (const row of pseudoRows) {
+    const nomReel = aliasMap[row.alias] || row.alias;
+    const siret   = row.siret || '';
+
+    const categorie = isCategorieDep(nomReel) || isLibelleComptable(siret);
+    const ponctuel  = !categorie && isEnseignePonctuelle(nomReel);
+
+    if (categorie) {
+      exclus.push({
+        alias:          row.alias,
+        statut:         'CATEGORIE_DEPENSE',
+        siret_ok:       false,
+        tva_ok:         false,
+        siren_coherent: false,
+        erreurs:        ['Libelle comptable — exclu du score e-Invoicing'],
+        suggestion:     'Categorie de depenses comptables. Non concerne par la facturation electronique.',
+        nom_reel:       nomReel,
+        _exclu:         true,
+        _type_exclu:    'categorie',
+      });
+    } else if (ponctuel) {
+      exclus.push({
+        alias:          row.alias,
+        statut:         'ENSEIGNE_PONCTUELLE',
+        siret_ok:       false,
+        tva_ok:         false,
+        siren_coherent: false,
+        erreurs:        ['Enseigne ponctuelle — achat en caisse probable'],
+        suggestion:     'Enseigne B2C ponctuelle. Achat en caisse sans flux e-Invoicing attendu.',
+        nom_reel:       nomReel,
+        _exclu:         true,
+        _type_exclu:    'ponctuel',
+      });
+    } else {
+      aAnalyser.push(row);
+    }
+  }
+
+  console.log(`[AUDIT] Classification : ${aAnalyser.length} reels, ${exclus.length} exclus`);
+  return { aAnalyser, exclus };
+}
+
 // ── Appel Claude pour un lot ──────────────────────────────
 async function analyzeWithClaude(batch, batchIndex) {
   const message = await anthropic.messages.create({
@@ -143,19 +269,23 @@ function buildCSVReport(results, aliasMap) {
   const BOM = '\uFEFF';
   const header = [
     'Nom d\'origine', 'Alias', 'Statut', 'SIRET/SIREN valide', 'TVA valide',
-    'Cohérence SIREN', 'Erreurs', 'Recommandation e-Invoicing 2026'
+    'Cohérence SIREN', 'Cat. depense', 'Erreurs', 'Recommandation e-Invoicing 2026'
   ].join(';');
 
-  const rows = results.map(r => [
-    `"${(aliasMap[r.alias] || r.alias).replace(/"/g, '""')}"`,
-    r.alias,
-    r.statut,
-    r.siret_ok ? 'OUI' : 'NON',
-    r.tva_ok   ? 'OUI' : 'NON',
-    r.siren_coherent ? 'OUI' : 'NON',
-    `"${(r.erreurs || []).join(' | ')}"`,
-    `"${(r.suggestion || '').replace(/"/g, '""')}"`,
-  ].join(';'));
+  const rows = results.map(r => {
+    const isExclu = r._exclu || r.statut === 'CATEGORIE_DEPENSE' || r.statut === 'ENSEIGNE_PONCTUELLE';
+    return [
+      `"${(aliasMap[r.alias] || r.nom_reel || r.alias).replace(/"/g, '""')}"`,
+      r.alias,
+      isExclu ? (r._type_exclu === 'categorie' ? 'Cat. depense' : 'Ponctuel') : r.statut,
+      isExclu ? '—' : (r.siret_ok ? 'OUI' : 'NON'),
+      isExclu ? '—' : (r.tva_ok   ? 'OUI' : 'NON'),
+      isExclu ? '—' : (r.siren_coherent ? 'OUI' : 'NON'),
+      isExclu ? 'OUI' : 'NON',
+      `"${(r.erreurs || []).join(' | ')}"`,
+      `"${(r.suggestion || '').replace(/"/g, '""')}"`,
+    ].join(';');
+  });
 
   return BOM + header + '\n' + rows.join('\n');
 }
@@ -233,33 +363,59 @@ async function runAuditAnalysis(fileId, user) {
       userId: user.id, tenantId: user.tenant_id, rowCount: pseudoRows.length
     });
 
-    // Traitement par lots
-    const allResults = [];
-    const totalBatches = Math.ceil(pseudoRows.length / BATCH_SIZE);
-    console.log(`[AUDIT] ${pseudoRows.length} fournisseurs → ${totalBatches} lot(s)`);
+    // ── Classification AVANT Claude ───────────────────────
+    const { aAnalyser, exclus } = classifyExclus(pseudoRows, aliasMap);
 
-    for (let i = 0; i < pseudoRows.length; i += BATCH_SIZE) {
-      const batch = pseudoRows.slice(i, i + BATCH_SIZE);
+    // ── Traitement par lots (fournisseurs réels uniquement) ─
+    const allResultsReels = [];
+    const totalBatches = Math.ceil(aAnalyser.length / BATCH_SIZE);
+    console.log(`[AUDIT] ${aAnalyser.length} fournisseurs reels → ${totalBatches} lot(s), ${exclus.length} exclus`);
+
+    for (let i = 0; i < aAnalyser.length; i += BATCH_SIZE) {
+      const batch = aAnalyser.slice(i, i + BATCH_SIZE);
       const batchIndex = Math.floor(i / BATCH_SIZE);
       console.log(`[AUDIT] Lot ${batchIndex + 1}/${totalBatches}`);
       const batchResults = await analyzeWithClaude(batch, batchIndex);
-      allResults.push(...batchResults);
+      allResultsReels.push(...batchResults);
     }
 
-    // Calcul summary global
-    const conformes  = allResults.filter(r => (r.statut||'').includes('Conforme')).length;
-    const a_corriger = allResults.filter(r => (r.statut||'').includes('corriger')).length;
-    const bloquants  = allResults.filter(r => (r.statut||'').includes('Bloquant')).length;
-    const taux       = allResults.length > 0 ? Math.round((conformes / allResults.length) * 100) : 0;
+    // ── Fusionner résultats réels + exclus (ordre original) ─
+    // Reconstruire dans l'ordre du fichier original
+    const aliasToResult = {};
+    allResultsReels.forEach(r => { aliasToResult[r.alias] = r; });
+    exclus.forEach(r => { aliasToResult[r.alias] = r; });
 
-    const summary = { total: allResults.length, conformes, a_corriger, bloquants, taux };
+    const allResults = pseudoRows.map(p => {
+      const r = aliasToResult[p.alias];
+      if (!r) return { alias: p.alias, statut: 'Bloquant', siret_ok: false, tva_ok: false, siren_coherent: false, erreurs: ['Non analysé'], suggestion: '' };
+      return r;
+    });
+
+    // ── Summary sur fournisseurs réels uniquement ──────────
+    const reels    = allResults.filter(r => !r._exclu);
+    const conformes  = reels.filter(r => (r.statut||'').includes('Conforme')).length;
+    const a_corriger = reels.filter(r => (r.statut||'').includes('corriger')).length;
+    const bloquants  = reels.filter(r => (r.statut||'').includes('Bloquant')).length;
+    const taux       = reels.length > 0 ? Math.round((conformes / reels.length) * 100) : 0;
+
+    const summary = {
+      total:           allResults.length,
+      total_reels:     reels.length,
+      total_exclus:    exclus.length,
+      nb_categories:   exclus.filter(r => r._type_exclu === 'categorie').length,
+      nb_ponctuels:    exclus.filter(r => r._type_exclu === 'ponctuel').length,
+      conformes,
+      a_corriger,
+      bloquants,
+      taux,
+    };
 
     const resultsWithNoms = allResults.map(r => ({
       ...r,
-      nom_reel: aliasMap[r.alias] || r.alias,
+      nom_reel: r.nom_reel || aliasMap[r.alias] || r.alias,
     }));
 
-    // ── Récupérer le rapport précédent pour le suivi mensuel ──
+    // ── Rapport précédent pour suivi mensuel ──────────────
     let previousReport = null;
     try {
       const prevResult = await pool.query(
@@ -283,7 +439,7 @@ async function runAuditAnalysis(fileId, user) {
       safeLog('warn', 'PREV_REPORT_FETCH_FAILED', { message: e.message });
     }
 
-    // ── Générer le rapport complet structuré (8 sections) ──
+    // ── Rapport complet structuré ─────────────────────────
     const fullReport = generateFullReport(
       { originalName: original_name, tenantId: user.tenant_id },
       resultsWithNoms,
@@ -325,7 +481,8 @@ async function runAuditAnalysis(fileId, user) {
     const duration = Date.now() - startTime;
     safeLog('info', 'AUDIT_COMPLETED', {
       userId: user.id, tenantId: user.tenant_id,
-      rowCount: summary.total, batches: totalBatches, durationMs: duration,
+      rowCount: summary.total, totalReels: reels.length,
+      exclus: exclus.length, batches: totalBatches, durationMs: duration,
     });
 
   } catch (err) {
