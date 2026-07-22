@@ -575,6 +575,12 @@ router.post('/:fileId/link', authenticate, checkRole(['admin','client']), async 
       process.env.JWT_SECRET,
       { expiresIn: DOWNLOAD_TTL_MIN + 'm' }
     );
+    safeLog('info', 'DOWNLOAD_LINK_GENERATED', { userId:req.user.id, tenantId:req.user.tenant_id, type });
+    res.json({
+      downloadUrl: '/api/reports/download/' + downloadToken,
+      expiresAt: new Date(Date.now() + DOWNLOAD_TTL_MIN*60000).toISOString(),
+      ttlMinutes: DOWNLOAD_TTL_MIN,
+    });
   } catch(err) {
     console.error('[Reports/link] Erreur:', err.message, err.stack);
     next(err);
