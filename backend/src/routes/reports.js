@@ -551,8 +551,8 @@ async function generatePDF(summaryData, fileName, companyName) {
     rowCount++;
   });
 
-  if (results.length > 44) {
-    p4.drawText('... et ' + (results.length-44) + ' autres entrees - voir fichier Excel pour la liste complete', { x:26, y:y+2, size:7, font:h, color:C.muted });
+ if (results.length > 44) {
+    p4.drawText('... et ' + (results.length-44) + ' autres entrees - export Excel complet disponible sur votre espace DataRemediation', { x:26, y:y+2, size:7, font:h, color:C.muted });
   }
 
   return Buffer.from(await pdfDoc.save());
