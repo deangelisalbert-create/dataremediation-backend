@@ -563,23 +563,18 @@ router.post('/:fileId/link', authenticate, checkRole(['admin','client']), async 
   try {
     const { fileId } = req.params;
     const { type } = req.body;
-    if (!['csv','pdf'].includes(type)) return res.status(400).json({ error: 'Type invalide' });
+    if (!['csv','excel','pdf'].includes(type)) return res.status(400).json({ error: 'Type invalide' });
     const result = await queryWithTenant(req.user.tenant_id,
       `SELECT id FROM audit_files WHERE id=$1 AND tenant_id=current_setting('app.tenant_id')::text AND status='done'`,
       [fileId]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Rapport introuvable ou analyse non terminee' });
+    const normalizedType = type === 'excel' ? 'csv' : type;
     const downloadToken = jwt.sign(
-      { fileId, tenantId:req.user.tenant_id, userId:req.user.id, type, purpose:'download' },
+      { fileId, tenantId:req.user.tenant_id, userId:req.user.id, type: normalizedType, purpose:'download' },
       process.env.JWT_SECRET,
       { expiresIn: DOWNLOAD_TTL_MIN + 'm' }
     );
-    safeLog('info', 'DOWNLOAD_LINK_GENERATED', { userId:req.user.id, tenantId:req.user.tenant_id, type });
-    res.json({
-      downloadUrl: '/api/reports/download/' + downloadToken,
-      expiresAt: new Date(Date.now() + DOWNLOAD_TTL_MIN*60000).toISOString(),
-      ttlMinutes: DOWNLOAD_TTL_MIN,
-    });
   } catch(err) {
     console.error('[Reports/link] Erreur:', err.message, err.stack);
     next(err);
